@@ -1,6 +1,7 @@
-# Quanta
-
-![Quanta manta icon](frontend/public/quanta-manta-icon.svg)
+<h1 align="center">
+  <img src="frontend/public/quanta-manta-icon.svg" alt="Quanta manta icon" width="42" style="vertical-align: middle; margin-right: 10px;" />
+  <span style="vertical-align: middle;">Quanta</span>
+</h1>
 
 Quanta is a Keras-first quantization visualization tool.
 
