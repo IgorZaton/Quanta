@@ -1,0 +1,162 @@
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  font-family: Arial, sans-serif;
+}
+
+.app {
+  height: 100vh;
+  display: flex;
+  flex-direction: column;
+}
+
+.toolbar {
+  height: 56px;
+  padding: 0 16px;
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  border-bottom: 1px solid #ddd;
+}
+
+.brand {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 0;
+}
+
+.legend {
+  display: flex;
+  gap: 12px;
+  font-size: 12px;
+  color: #334155;
+  margin-left: auto;
+}
+
+.body {
+  flex: 1;
+  display: grid;
+  grid-template-columns: 2fr 1fr;
+}
+
+.graph {
+  border-right: 1px solid #ddd;
+}
+
+.panel {
+  overflow: auto;
+  padding: 12px;
+}
+
+.metrics {
+  display: flex;
+  gap: 16px;
+  margin-bottom: 10px;
+}
+
+.qparams pre {
+  max-height: 220px;
+  overflow: auto;
+  background: #f7f7f7;
+  padding: 8px;
+}
+
+.plot-card {
+  border: 1px solid #e5e7eb;
+  border-radius: 8px;
+  padding: 8px;
+  margin-bottom: 12px;
+  background: #fff;
+}
+
+.plot-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin: 0 4px 6px;
+}
+
+.plot-head h4 {
+  margin: 0;
+  font-size: 14px;
+}
+
+.detail .plot-head h3 {
+  margin: 0;
+}
+
+.layer-subtype {
+  margin-top: 2px;
+  font-size: 12px;
+  font-weight: 400;
+  color: #64748b;
+}
+
+.plot-head button,
+.close-btn {
+  border: 1px solid #cbd5e1;
+  background: #f8fafc;
+  border-radius: 6px;
+  padding: 4px 10px;
+  cursor: pointer;
+}
+
+.plot-modal {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.45);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 1000;
+}
+
+.plot-modal-content {
+  width: min(1280px, 96vw);
+  max-height: 92vh;
+  overflow: auto;
+  background: #fff;
+  border-radius: 10px;
+  padding: 12px;
+}
+
+.close-btn {
+  margin-bottom: 8px;
+}
+
+.loading-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 2000;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
+  background: rgba(230, 251, 255, 0.92);
+}
+
+.loading-title {
+  font-size: 24px;
+  font-weight: 700;
+  color: #0f4c81;
+}
+
+.spinner {
+  width: 36px;
+  height: 36px;
+  border: 4px solid #93c5fd;
+  border-top-color: #0f4c81;
+  border-radius: 50%;
+  animation: spin 0.9s linear infinite;
+}
+
+@keyframes spin {
+  to {
+    transform: rotate(360deg);
+  }
+}

@@ -1,0 +1,44 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <link rel="icon" type="image/svg+xml" href="/quanta-manta-icon.svg" />
+    <title>Quanta</title>
+    <style>
+      .boot {
+        position: fixed;
+        inset: 0;
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        justify-content: center;
+        gap: 10px;
+        background: #e6fbff;
+        color: #0f4c81;
+        font-family: Arial, sans-serif;
+      }
+      .boot-spinner {
+        width: 34px;
+        height: 34px;
+        border: 4px solid #93c5fd;
+        border-top-color: #0f4c81;
+        border-radius: 50%;
+        animation: boot-spin 0.9s linear infinite;
+      }
+      @keyframes boot-spin {
+        to { transform: rotate(360deg); }
+      }
+    </style>
+  </head>
+  <body>
+    <div id="root">
+      <div class="boot">
+        <img src="/quanta-manta-icon.svg" alt="Quanta icon" width="68" height="68" />
+        <div style="font-size:22px;font-weight:700;">Quanta</div>
+        <div class="boot-spinner"></div>
+      </div>
+    </div>
+    <script type="module" src="/src/main.tsx"></script>
+  </body>
+</html>

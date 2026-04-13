@@ -1,0 +1,29 @@
+[project]
+name = "quanta"
+version = "0.1.0"
+description = "Keras quantization visualization toolkit"
+requires-python = ">=3.10"
+dependencies = [
+  "fastapi>=0.115.0",
+  "uvicorn>=0.30.0",
+  "numpy>=1.26.0",
+  "tensorflow>=2.16.0",
+  "pydantic>=2.7.0",
+]
+
+[project.scripts]
+quanta = "quanta.cli:main"
+
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools]
+package-dir = {"" = "."}
+
+[tool.setuptools.packages.find]
+where = ["."]
+
+[tool.setuptools.package-data]
+"quanta.assets" = ["*.keras", "*.npy"]
+"quanta.web" = ["index.html", "quanta-manta-icon.svg", "assets/*"]
