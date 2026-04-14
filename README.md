@@ -17,24 +17,34 @@ It runs a min/max observer pipeline, builds a fake INT8 quantized path (with deq
 ### Backend
 
 ```bash
-cd quanta/backend
+cd backend
 pip install -e .
 ```
 
 ### Frontend (optional but recommended)
 
 ```bash
-cd quanta/frontend
+cd frontend
 npm install
 npm run build
 ```
 
 If frontend is not built, the backend still starts and serves API endpoints at `/api/*`.
 
+## Build local release artifact
+
+Build a wheel that includes the production frontend bundle:
+
+```bash
+./scripts/release.sh
+```
+
+This produces installable artifacts in `backend/dist/` (including `.whl`).
+
 ## Run
 
 ```bash
-cd quanta/backend
+cd backend
 quanta --model /path/to/model.keras --dataset /path/to/dataset.npy
 ```
 
@@ -52,13 +62,13 @@ Useful flags:
 
 `--test` uses assets bundled with the project/package:
 
-- `quanta/backend/quanta/assets/mnist_cnn.keras`
-- `quanta/backend/quanta/assets/mnist_test.npy`
+- `backend/quanta/assets/mnist_cnn.keras`
+- `backend/quanta/assets/mnist_test.npy`
 
 Example:
 
 ```bash
-cd quanta/backend
+cd backend
 quanta --test --cpu-only --max-samples 64 --batch-size 8
 ```
 
@@ -67,7 +77,7 @@ quanta --test --cpu-only --max-samples 64 --batch-size 8
 If you want to retrain and regenerate bundled test assets:
 
 ```bash
-cd quanta/backend
+cd backend
 python scripts/train_mnist_cnn.py
 ```
 
@@ -80,18 +90,51 @@ Each run writes artifacts to `.quanta/run_YYYYMMDD_HHMMSS`:
 - `distributions.json`
 - `qparams.json`
 
+Dataset analysis outputs (for richer EDA/statistics) are planned and tracked in `TODO.md`.
+
 ## Dev UI mode
 
 Run backend and frontend separately:
 
 ```bash
 # terminal 1
-cd quanta/backend
+cd backend
 quanta --model /path/to/model.keras --dataset /path/to/dataset.npy --no-ui
 
 # terminal 2
-cd quanta/frontend
+cd frontend
 npm run dev
 ```
 
 Vite proxy is configured so frontend `/api` calls go to `http://127.0.0.1:8000`.
+
+## Scripts
+
+Project-level helper scripts:
+
+- `./scripts/build.sh` rebuilds frontend and reinstalls backend editable package.
+- `./scripts/run.sh` does the same setup, stops existing Quanta processes, then starts Quanta (defaults to `--test --test-bad --cpu-only --max-samples 8 --batch-size 16` when no args are passed).
+- `./scripts/release.sh` builds frontend, syncs it into package data, builds Python distribution artifacts, verifies the wheel contents, and smoke-tests wheel install.
+
+## CI/CD
+
+GitHub Actions workflows:
+
+- `.github/workflows/ci.yml` runs on every push and pull request:
+  - Runs backend tests (`pytest -q backend/tests`).
+  - Builds frontend to catch integration/build issues.
+- `.github/workflows/release.yml` runs only when a GitHub Release is published:
+  - Runs `./scripts/release.sh`.
+  - Uploads built artifacts from `backend/dist/*`.
+
+## Pre-commit hooks
+
+Install and enable pre-commit locally:
+
+```bash
+python -m pip install pre-commit
+pre-commit install
+```
+
+Current hooks include formatting/sanity checks and a backend test gate (`pytest -q tests`) that runs before each commit.
+The `commit-msg` hook uses Commitizen, so commit messages should follow Conventional Commits (for example: `feat: add dataset analysis section`).

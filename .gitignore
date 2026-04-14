@@ -1,9 +1,34 @@
 .quanta/
 __pycache__/
 *.pyc
+*.pyo
+*.pyd
+
+# Python tooling caches
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+.coverage
+coverage.xml
+htmlcov/
+
+# Virtual environments
+.venv/
+venv/
+
+# Frontend artifacts
 frontend/node_modules/
 frontend/dist/
-backend/quanta.egg-info
+
+# Backend build artifacts
+backend/dist/
+backend/build/
+backend/quanta.egg-info/
+*.egg-info/
 
 backend/.quantvis/
 manual_tests/
+.pre-commit-cache/
+
+# Generated frontend bundle synced into backend package
+backend/quanta/web/assets/
