@@ -1,9 +1,9 @@
 # TODO
 
-- [ ] Design and implement lightweight cache storage:
+- [x] Design and implement lightweight cache storage:
   - Reduce per-run artifact footprint.
   - Keep only essential summaries by default.
-  - Make full distributions optional/on-demand.
+  - Keep full distributions in active tmp run cache and store optionally in finalized runs.
 
 - [ ] Add "load from run" support:
   - CLI option to start server from an existing run directory (without recomputation).
@@ -20,7 +20,7 @@
   - Include distribution plots/correlation highlights in generated artifacts.
   - Expose dataset analysis in docs/README and (if available) UI.
 
-- [ ] Add CI/CD:
+- [x] Add CI/CD:
   - CI workflow for lint/test/build on pull requests and main branch.
   - Cache dependencies and publish test artifacts/reports.
   - CD step for tagged releases (package publish and/or deployment).
