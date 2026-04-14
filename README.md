@@ -7,6 +7,8 @@ Quanta is a Keras-first quantization visualization tool.
 
 It runs a min/max observer pipeline, builds a fake INT8 quantized path (with dequantization for fair comparison), computes error metrics, and serves an interactive graph UI with per-layer violin plots for weights and activations.
 
+[![CI](https://github.com/SigmaConnectivityPl/Quanta/actions/workflows/ci.yml/badge.svg)](https://github.com/SigmaConnectivityPl/Quanta/actions/workflows/ci.yml)
+
 ## Prerequisites
 
 - Python 3.10+
