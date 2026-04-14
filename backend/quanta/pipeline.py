@@ -30,28 +30,48 @@ class PipelineConfig:
     layer_weight_modes: dict[str, str] | None = None
     layer_activation_modes: dict[str, str] | None = None
     custom_objects: dict[str, Any] | None = None
+    max_cached_runs: int = 3
 
 
-def _prune_previous_runs(output_root: Path) -> None:
+def _prune_previous_runs(
+    output_root: Path, keep_runs: int = 3, preserve: set[Path] | None = None
+) -> None:
     if not output_root.exists():
         return
-    for child in output_root.iterdir():
-        if child.is_dir() and child.name.startswith("run_"):
-            shutil.rmtree(child, ignore_errors=True)
+    preserve = preserve or set()
+    run_dirs = [
+        child
+        for child in output_root.iterdir()
+        if child.is_dir() and child.name.startswith("run_")
+    ]
+    run_dirs.sort(key=lambda p: p.stat().st_mtime, reverse=True)
+
+    for old_run in run_dirs[keep_runs:]:
+        if old_run in preserve:
+            continue
+        shutil.rmtree(old_run, ignore_errors=True)
 
 
 def run_pipeline(config: PipelineConfig) -> Path:
     loader = ModelLoader()
     converter = ModelConverter()
-    unified_model = converter.convert(loader.load(config.model_path, custom_objects=config.custom_objects))
-    dataset_adapter = DatasetAdapter(config.dataset_path, batch_size=config.batch_size, max_samples=config.max_samples)
+    unified_model = converter.convert(
+        loader.load(config.model_path, custom_objects=config.custom_objects)
+    )
+    dataset_adapter = DatasetAdapter(
+        config.dataset_path,
+        batch_size=config.batch_size,
+        max_samples=config.max_samples,
+    )
     dataset = dataset_adapter.load().astype(np.float32)
     if isinstance(unified_model.model.input_shape, list):
         raise ValueError("Multi-input models are not supported in this MVP")
     expected_shape = tuple(unified_model.model.input_shape[1:])
     sample_shape = tuple(dataset.shape[1:])
     if expected_shape != sample_shape:
-        raise ValueError(f"Dataset sample shape {sample_shape} does not match model input shape {expected_shape}")
+        raise ValueError(
+            f"Dataset sample shape {sample_shape} does not match model input shape {expected_shape}"
+        )
 
     batches = list(dataset_adapter.iter_batches())
     result = run_fake_quant_pipeline(
@@ -68,17 +88,23 @@ def run_pipeline(config: PipelineConfig) -> Path:
 
     metadata = unified_model.metadata
     layer_modes = result.get("layer_modes", {"weight": {}, "activation": {}})
-    estimates = estimate_tradeoffs(metadata, layer_modes.get("weight", {}), layer_modes.get("activation", {}))
-    graph = unified_model.graph or build_graph(unified_model.model, metadata, metrics["layers"], estimates.get("layers", {}))
+    estimates = estimate_tradeoffs(
+        metadata, layer_modes.get("weight", {}), layer_modes.get("activation", {})
+    )
+    graph = unified_model.graph or build_graph(
+        unified_model.model, metadata, metrics["layers"], estimates.get("layers", {})
+    )
     if unified_model.graph is not None:
         for node in graph.get("nodes", []):
             node_name = node.get("name", "")
-            node["metrics"] = metrics["layers"].get(node_name, {"mae": 0.0, "rmse": 0.0, "kl": 0.0})
+            node["metrics"] = metrics["layers"].get(
+                node_name, {"mae": 0.0, "rmse": 0.0, "kl": 0.0}
+            )
             node["estimates"] = estimates.get("layers", {}).get(node_name, {})
 
     output_root = Path(config.output_root)
-    _prune_previous_runs(output_root)
-    run_dir = output_root / datetime.now().strftime("run_%Y%m%d_%H%M%S")
+    output_root.mkdir(parents=True, exist_ok=True)
+    run_dir = output_root / datetime.now().strftime("run_%Y%m%d_%H%M%S_%f")
     write_artifacts(
         run_dir,
         graph=graph,
@@ -90,5 +116,8 @@ def run_pipeline(config: PipelineConfig) -> Path:
         weight_info=result["weight_info"],
         layer_modes=layer_modes,
         estimates=estimates,
+    )
+    _prune_previous_runs(
+        output_root, keep_runs=max(1, config.max_cached_runs), preserve={run_dir}
     )
     return run_dir

@@ -38,7 +38,9 @@ class BaseFakeQuantEngine(ABC):
 
 
 class DatasetAdapter:
-    def __init__(self, dataset_path: str, batch_size: int = 32, max_samples: int | None = None) -> None:
+    def __init__(
+        self, dataset_path: str, batch_size: int = 32, max_samples: int | None = None
+    ) -> None:
         self.dataset_path = Path(dataset_path)
         if batch_size <= 0:
             raise ValueError("batch_size must be > 0")
@@ -56,7 +58,9 @@ class DatasetAdapter:
         if not isinstance(data, np.ndarray):
             raise ValueError("Dataset must be a numpy ndarray")
         if data.ndim < 2:
-            raise ValueError("Dataset must include batch dimension and feature dimensions")
+            raise ValueError(
+                "Dataset must include batch dimension and feature dimensions"
+            )
         if self.max_samples is not None:
             data = data[: self.max_samples]
         return data.astype(np.float32)
@@ -85,13 +89,19 @@ class KerasModelAdapter(BaseModelAdapter):
     def _load_savedmodel_as_keras(self, model_path: Path) -> tf.keras.Model:
         artifact = tf.saved_model.load(str(model_path))
         signatures = artifact.signatures
-        endpoint = "serving_default" if "serving_default" in signatures else next(iter(signatures.keys()), None)
+        endpoint = (
+            "serving_default"
+            if "serving_default" in signatures
+            else next(iter(signatures.keys()), None)
+        )
         if endpoint is None:
             raise ValueError(f"SavedModel at {model_path} has no callable signatures")
         fn = signatures[endpoint]
         input_specs = list(fn.structured_input_signature[1].items())
         if len(input_specs) != 1:
-            raise ValueError("SavedModel fallback currently supports single-input signatures only")
+            raise ValueError(
+                "SavedModel fallback currently supports single-input signatures only"
+            )
         in_name, spec = input_specs[0]
         if spec.shape.rank is None or spec.shape.rank < 2:
             raise ValueError("SavedModel input rank must be >= 2")
@@ -108,7 +118,9 @@ class KerasModelAdapter(BaseModelAdapter):
         expected_shape = tuple(self.model.input_shape[1:])
         sample_shape = tuple(data.shape[1:])
         if expected_shape != sample_shape:
-            raise ValueError(f"Dataset sample shape {sample_shape} does not match model input shape {expected_shape}")
+            raise ValueError(
+                f"Dataset sample shape {sample_shape} does not match model input shape {expected_shape}"
+            )
 
     def layer_metadata(self) -> list[LayerMeta]:
         meta: list[LayerMeta] = []
@@ -126,5 +138,7 @@ class KerasModelAdapter(BaseModelAdapter):
         return meta
 
     def build_probe_model(self) -> tf.keras.Model:
-        outputs = [layer.output for layer in self.model.layers if hasattr(layer, "output")]
+        outputs = [
+            layer.output for layer in self.model.layers if hasattr(layer, "output")
+        ]
         return tf.keras.Model(inputs=self.model.input, outputs=outputs)

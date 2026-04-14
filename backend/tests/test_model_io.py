@@ -25,7 +25,10 @@ class EnsureUniqueLayerNamesTest(unittest.TestCase):
         normalized = _ensure_unique_layer_names(model)
 
         self.assertIsNot(normalized, model)
-        self.assertEqual([l.name for l in normalized.layers], [l.name for l in model.layers])
+        self.assertEqual(
+            [layer.name for layer in normalized.layers],
+            [layer.name for layer in model.layers],
+        )
 
     def test_clones_model_and_renames_duplicate_layers(self) -> None:
         model = self._build_model()

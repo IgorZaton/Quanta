@@ -14,8 +14,12 @@ from typing import Any
 
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="Quanta quantization visualizer")
-    parser.add_argument("--model", required=False, help="Path to Keras model file (.keras)")
-    parser.add_argument("--dataset", required=False, help="Path to representative dataset .npy")
+    parser.add_argument(
+        "--model", required=False, help="Path to Keras model file (.keras)"
+    )
+    parser.add_argument(
+        "--dataset", required=False, help="Path to representative dataset .npy"
+    )
     parser.add_argument(
         "--test",
         action="store_true",
@@ -86,7 +90,9 @@ def _parse_custom_object_specs(mapping: dict[str, Any], source: str) -> dict[str
     resolved: dict[str, Any] = {}
     for key, value in mapping.items():
         if not isinstance(key, str):
-            raise SystemExit(f"{source}: custom object key must be a string, got {type(key).__name__}")
+            raise SystemExit(
+                f"{source}: custom object key must be a string, got {type(key).__name__}"
+            )
         if not isinstance(value, str) or ":" not in value:
             raise SystemExit(
                 f"{source}: value for '{key}' must be a string in format 'module:attribute', got {value!r}"
@@ -113,7 +119,9 @@ def _parse_custom_object_specs(mapping: dict[str, Any], source: str) -> dict[str
                     continue
                 try:
                     synthetic_name = f"quanta_user_custom_{candidate.stem}_{abs(hash(str(candidate)))}"
-                    spec = importlib.util.spec_from_file_location(synthetic_name, str(candidate))
+                    spec = importlib.util.spec_from_file_location(
+                        synthetic_name, str(candidate)
+                    )
                     if spec is None or spec.loader is None:
                         continue
                     loaded = importlib.util.module_from_spec(spec)
@@ -155,7 +163,9 @@ def _load_custom_objects(args: argparse.Namespace) -> dict[str, Any]:
                 "--custom-objects-module must expose CUSTOM_OBJECTS dict or get_custom_objects()"
             )
         if not isinstance(module_objects, dict):
-            raise SystemExit("--custom-objects-module object provider must return a dict")
+            raise SystemExit(
+                "--custom-objects-module object provider must return a dict"
+            )
         for key, value in module_objects.items():
             if not isinstance(key, str):
                 raise SystemExit("--custom-objects-module keys must be strings")
@@ -168,7 +178,9 @@ def _load_custom_objects(args: argparse.Namespace) -> dict[str, Any]:
         try:
             payload = json.loads(path.read_text())
         except Exception as exc:
-            raise SystemExit(f"--custom-objects-file must contain valid JSON: {exc}") from exc
+            raise SystemExit(
+                f"--custom-objects-file must contain valid JSON: {exc}"
+            ) from exc
         if not isinstance(payload, dict):
             raise SystemExit("--custom-objects-file JSON must be an object")
         merged.update(_parse_custom_object_specs(payload, "--custom-objects-file"))
@@ -205,7 +217,9 @@ def main() -> None:
                 args.max_samples = 64
         else:
             if not args.model or not args.dataset:
-                raise SystemExit("--model and --dataset are required unless --test is provided")
+                raise SystemExit(
+                    "--model and --dataset are required unless --test is provided"
+                )
             if not Path(args.model).exists():
                 raise SystemExit(f"Model path does not exist: {args.model}")
             if not Path(args.dataset).exists():

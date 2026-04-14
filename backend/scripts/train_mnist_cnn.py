@@ -19,7 +19,9 @@ def build_model() -> tf.keras.Model:
             tf.keras.layers.Dense(10, activation="softmax"),
         ]
     )
-    model.compile(optimizer="adam", loss="sparse_categorical_crossentropy", metrics=["accuracy"])
+    model.compile(
+        optimizer="adam", loss="sparse_categorical_crossentropy", metrics=["accuracy"]
+    )
     return model
 
 
@@ -32,7 +34,9 @@ def main() -> None:
     x_test = (x_test.astype(np.float32) / 255.0)[..., np.newaxis]
 
     model = build_model()
-    model.fit(x_train, y_train, epochs=2, batch_size=128, validation_split=0.1, verbose=2)
+    model.fit(
+        x_train, y_train, epochs=2, batch_size=128, validation_split=0.1, verbose=2
+    )
 
     model_path = assets_dir / "mnist_cnn.keras"
     dataset_path = assets_dir / "mnist_test.npy"

@@ -13,7 +13,7 @@ from .model_inspect import LayerRef, iter_leaf_layers
 MAX_DIST_SAMPLES = 2048
 RANGE_MODES = {"minmax", "clip99_99", "clip99_999"}
 LAYER_MODES = {"int2", "int4", "int8", "int12", "int16", "fp16", "fp32"}
-INT8_MIN, INT8_MAX = -(2 ** 7), (2 ** 7) - 1
+INT8_MIN, INT8_MAX = -(2**7), (2**7) - 1
 
 
 @dataclass
@@ -36,7 +36,12 @@ def _int_bounds(bit_width: int) -> tuple[int, int]:
     return qmin, qmax
 
 
-def calc_qparams(values: np.ndarray, axis: int | None = None, range_mode: str = "minmax", bit_width: int = 8) -> QParams:
+def calc_qparams(
+    values: np.ndarray,
+    axis: int | None = None,
+    range_mode: str = "minmax",
+    bit_width: int = 8,
+) -> QParams:
     if range_mode not in RANGE_MODES:
         raise ValueError(f"Unsupported range mode: {range_mode}")
     if axis is None or values.ndim == 0:
@@ -69,10 +74,14 @@ def calc_qparams(values: np.ndarray, axis: int | None = None, range_mode: str = 
         zp_float = np.round(qmin - (min_val / scale))
     zp_float = np.nan_to_num(zp_float, nan=0.0, posinf=float(qmax), neginf=float(qmin))
     zero_point = np.clip(zp_float, qmin, qmax).astype(np.int32)
-    return QParams(scale=scale, zero_point=zero_point, min_val=min_val, max_val=max_val, axis=axis)
+    return QParams(
+        scale=scale, zero_point=zero_point, min_val=min_val, max_val=max_val, axis=axis
+    )
 
 
-def quantize_dequantize(values: np.ndarray, qparams: QParams, bit_width: int = 8) -> np.ndarray:
+def quantize_dequantize(
+    values: np.ndarray, qparams: QParams, bit_width: int = 8
+) -> np.ndarray:
     qmin, qmax = _int_bounds(bit_width)
     if qparams.axis is None or np.isscalar(qparams.scale):
         q = np.round(values / qparams.scale + qparams.zero_point)
@@ -87,7 +96,9 @@ def quantize_dequantize(values: np.ndarray, qparams: QParams, bit_width: int = 8
     return (q - zp) * scale
 
 
-def apply_layer_mode(values: np.ndarray, mode: str, qparams: QParams | None) -> np.ndarray:
+def apply_layer_mode(
+    values: np.ndarray, mode: str, qparams: QParams | None
+) -> np.ndarray:
     if mode == "fp32" or qparams is None:
         return values.astype(np.float32)
     if mode == "fp16":
@@ -96,7 +107,9 @@ def apply_layer_mode(values: np.ndarray, mode: str, qparams: QParams | None) -> 
     return quantize_dequantize(values, qparams, bit_width=bit_width).astype(np.float32)
 
 
-def _apply_layer_mode_tensor(values: tf.Tensor, mode: str, qparams: QParams | None) -> tf.Tensor:
+def _apply_layer_mode_tensor(
+    values: tf.Tensor, mode: str, qparams: QParams | None
+) -> tf.Tensor:
     if mode == "fp32" or qparams is None:
         return tf.cast(values, tf.float32)
     if mode == "fp16":
@@ -126,18 +139,32 @@ def _patch_layer_activation_modes(
         qparams = activation_qparams.get(ref.name)
         original_call = layer.call
 
-        def _wrapped_call(self, *args, __orig_call=original_call, __mode=mode, __qparams=qparams, **kwargs):
+        def _wrapped_call(
+            self,
+            *args,
+            __orig_call=original_call,
+            __mode=mode,
+            __qparams=qparams,
+            **kwargs,
+        ):
             out = __orig_call(*args, **kwargs)
             if isinstance(out, dict):
-                return {k: _apply_layer_mode_tensor(v, __mode, __qparams) for k, v in out.items()}
+                return {
+                    k: _apply_layer_mode_tensor(v, __mode, __qparams)
+                    for k, v in out.items()
+                }
             if isinstance(out, (list, tuple)):
-                return type(out)(_apply_layer_mode_tensor(o, __mode, __qparams) for o in out)
+                return type(out)(
+                    _apply_layer_mode_tensor(o, __mode, __qparams) for o in out
+                )
             return _apply_layer_mode_tensor(out, __mode, __qparams)
 
         layer.call = types.MethodType(_wrapped_call, layer)
 
 
-def _sample_channel_values(values: np.ndarray, axis: int | None) -> dict[str, list[float]]:
+def _sample_channel_values(
+    values: np.ndarray, axis: int | None
+) -> dict[str, list[float]]:
     if axis is None or values.ndim == 1:
         vals = values.reshape(-1)
         sampled = vals[:MAX_DIST_SAMPLES] if vals.size > MAX_DIST_SAMPLES else vals
@@ -160,8 +187,13 @@ def _infer_weight_axis(weights: np.ndarray) -> int | None:
 
 def _pick_bad_layers(model: tf.keras.Model) -> set[str]:
     refs = iter_leaf_layers(model)
-    conv_layer = next((ref.name for ref in refs if isinstance(ref.layer, tf.keras.layers.Conv2D)), None)
-    dense_layer = next((ref.name for ref in refs if isinstance(ref.layer, tf.keras.layers.Dense)), None)
+    conv_layer = next(
+        (ref.name for ref in refs if isinstance(ref.layer, tf.keras.layers.Conv2D)),
+        None,
+    )
+    dense_layer = next(
+        (ref.name for ref in refs if isinstance(ref.layer, tf.keras.layers.Dense)), None
+    )
     selected = {name for name in (conv_layer, dense_layer) if name is not None}
     return selected
 
@@ -216,7 +248,9 @@ def _capture_layer_outputs(
             original_call = layer.call
             originals.append((layer, original_call))
 
-            def _wrapped_call(self, *args, __orig_call=original_call, __name=ref.name, **kwargs):
+            def _wrapped_call(
+                self, *args, __orig_call=original_call, __name=ref.name, **kwargs
+            ):
                 out = __orig_call(*args, **kwargs)
                 tensor = _to_primary_tensor(out)
                 per_layer[__name].append(np.array(tensor))
@@ -230,7 +264,11 @@ def _capture_layer_outputs(
         for layer, original_call in originals:
             layer.call = original_call
 
-    return {name: np.concatenate(chunks, axis=0) for name, chunks in per_layer.items() if chunks}
+    return {
+        name: np.concatenate(chunks, axis=0)
+        for name, chunks in per_layer.items()
+        if chunks
+    }
 
 
 def collect_activation_ranges(
@@ -247,7 +285,9 @@ def collect_activation_ranges(
         mode = activation_modes.get(name, "int8")
         if mode.startswith("int"):
             bit_width = int(mode.replace("int", ""))
-            activation_qparams[name] = calc_qparams(merged, axis=axis, range_mode=range_mode, bit_width=bit_width)
+            activation_qparams[name] = calc_qparams(
+                merged, axis=axis, range_mode=range_mode, bit_width=bit_width
+            )
     return activation_qparams, fp32_outputs
 
 
@@ -274,7 +314,9 @@ def quantize_model_weights(
         q = None
         if mode.startswith("int"):
             bit_width = int(mode.replace("int", ""))
-            q = calc_qparams(kernel, axis=axis, range_mode=range_mode, bit_width=bit_width)
+            q = calc_qparams(
+                kernel, axis=axis, range_mode=range_mode, bit_width=bit_width
+            )
             if ref.name in bad_layers:
                 q = _corrupt_qparams(q)
             qdq = quantize_dequantize(kernel, q, bit_width=bit_width).astype(np.float32)
@@ -289,8 +331,12 @@ def quantize_model_weights(
             bias_qparams = None
             if mode.startswith("int"):
                 # Bias simulation in integer pipeline: use int32 QDQ.
-                bias_qparams = calc_qparams(bias, axis=None, range_mode=range_mode, bit_width=32)
-                bias_qdq = quantize_dequantize(bias, bias_qparams, bit_width=32).astype(np.float32)
+                bias_qparams = calc_qparams(
+                    bias, axis=None, range_mode=range_mode, bit_width=32
+                )
+                bias_qdq = quantize_dequantize(bias, bias_qparams, bit_width=32).astype(
+                    np.float32
+                )
             new_weights = [qdq, bias_qdq, *weights[2:]]
             bias_info = {
                 "original": bias,
@@ -325,7 +371,9 @@ def run_fake_quant_pipeline(
     if global_weight_mode not in LAYER_MODES:
         raise ValueError(f"Unsupported global weight mode: {global_weight_mode}")
     if global_activation_mode not in LAYER_MODES:
-        raise ValueError(f"Unsupported global activation mode: {global_activation_mode}")
+        raise ValueError(
+            f"Unsupported global activation mode: {global_activation_mode}"
+        )
     if not model.inputs:
         # Ensure functional graph tensors exist for loaded Sequential variants.
         model(_build_model_feed(model, dataset_batches[0]), training=False)
@@ -341,7 +389,9 @@ def run_fake_quant_pipeline(
         for k, v in layer_activation_modes.items():
             if v in LAYER_MODES and k in activation_mode_map:
                 activation_mode_map[k] = v
-    bad_layers = _pick_bad_layers(model) if intentionally_bad_layers_count > 0 else set()
+    bad_layers = (
+        _pick_bad_layers(model) if intentionally_bad_layers_count > 0 else set()
+    )
     activation_qparams, fp32_outputs = collect_activation_ranges(
         model,
         dataset_batches,
@@ -350,8 +400,12 @@ def run_fake_quant_pipeline(
         activation_mode_map,
     )
     for layer_name in bad_layers:
-        if layer_name in activation_qparams and activation_mode_map.get(layer_name, "int8").startswith("int"):
-            activation_qparams[layer_name] = _corrupt_qparams(activation_qparams[layer_name])
+        if layer_name in activation_qparams and activation_mode_map.get(
+            layer_name, "int8"
+        ).startswith("int"):
+            activation_qparams[layer_name] = _corrupt_qparams(
+                activation_qparams[layer_name]
+            )
 
     quant_model, weight_info = quantize_model_weights(
         model,
@@ -373,12 +427,20 @@ def run_fake_quant_pipeline(
         deq = merged.astype(np.float32)
         dequant_outputs[name] = deq
         act_errors = fp32_outputs[name] - deq
-        axis = activation_qparams[name].axis if name in activation_qparams else (-1 if deq.ndim > 1 else None)
+        axis = (
+            activation_qparams[name].axis
+            if name in activation_qparams
+            else (-1 if deq.ndim > 1 else None)
+        )
         activation_distributions[name] = {
             "pre": _sample_channel_values(fp32_outputs[name], axis),
             "post": _sample_channel_values(deq, axis),
-            "error_mae": _sample_channel_values(_metric_error_values(act_errors, "mae"), axis),
-            "error_rmse": _sample_channel_values(_metric_error_values(act_errors, "rmse"), axis),
+            "error_mae": _sample_channel_values(
+                _metric_error_values(act_errors, "mae"), axis
+            ),
+            "error_rmse": _sample_channel_values(
+                _metric_error_values(act_errors, "rmse"), axis
+            ),
         }
 
     weight_distributions: dict[str, dict[str, dict[str, list[float]]]] = {}
@@ -389,8 +451,12 @@ def run_fake_quant_pipeline(
         weight_distributions[name] = {
             "pre": _sample_channel_values(info["original"], axis),
             "post": _sample_channel_values(info["qdq"], axis),
-            "error_mae": _sample_channel_values(_metric_error_values(w_err, "mae"), axis),
-            "error_rmse": _sample_channel_values(_metric_error_values(w_err, "rmse"), axis),
+            "error_mae": _sample_channel_values(
+                _metric_error_values(w_err, "mae"), axis
+            ),
+            "error_rmse": _sample_channel_values(
+                _metric_error_values(w_err, "rmse"), axis
+            ),
         }
         bias = info.get("bias")
         if bias is not None:
@@ -398,8 +464,12 @@ def run_fake_quant_pipeline(
             bias_distributions[name] = {
                 "pre": _sample_channel_values(bias["original"], None),
                 "post": _sample_channel_values(bias["qdq"], None),
-                "error_mae": _sample_channel_values(_metric_error_values(b_err, "mae"), None),
-                "error_rmse": _sample_channel_values(_metric_error_values(b_err, "rmse"), None),
+                "error_mae": _sample_channel_values(
+                    _metric_error_values(b_err, "mae"), None
+                ),
+                "error_rmse": _sample_channel_values(
+                    _metric_error_values(b_err, "rmse"), None
+                ),
             }
 
     return {

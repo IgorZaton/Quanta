@@ -52,7 +52,9 @@ def _channel_metric(a: np.ndarray, b: np.ndarray, metric: str) -> list[float]:
     return out
 
 
-def compute_metrics(fp32_outputs: dict[str, np.ndarray], dequant_outputs: dict[str, np.ndarray]) -> dict[str, Any]:
+def compute_metrics(
+    fp32_outputs: dict[str, np.ndarray], dequant_outputs: dict[str, np.ndarray]
+) -> dict[str, Any]:
     layer_metrics: dict[str, Any] = {}
     maes: list[float] = []
     rmses: list[float] = []

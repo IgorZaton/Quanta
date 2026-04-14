@@ -21,7 +21,9 @@ class RawEdge:
     target_input_index: int | None = None
 
 
-def _layer_input_sources(layer: tf.keras.layers.Layer, op_to_name: dict[int, str]) -> list[tuple[str, int | None, int]]:
+def _layer_input_sources(
+    layer: tf.keras.layers.Layer, op_to_name: dict[int, str]
+) -> list[tuple[str, int | None, int]]:
     names: list[tuple[str, int | None, int]] = []
     try:
         tensors = layer.input if isinstance(layer.input, list) else [layer.input]
@@ -106,8 +108,12 @@ def build_graph(
                 "input_shape": str(getattr(ref.layer, "input_shape", None)),
                 "output_shape": str(getattr(ref.layer, "output_shape", None)),
                 "params": (layer_meta.params if layer_meta else 0),
-                "has_weights": (layer_meta.has_weights if layer_meta else bool(ref.layer.weights)),
-                "metrics": layer_metrics.get(ref.name, {"mae": 0.0, "rmse": 0.0, "kl": 0.0}),
+                "has_weights": (
+                    layer_meta.has_weights if layer_meta else bool(ref.layer.weights)
+                ),
+                "metrics": layer_metrics.get(
+                    ref.name, {"mae": 0.0, "rmse": 0.0, "kl": 0.0}
+                ),
                 "estimates": (layer_estimates or {}).get(ref.name, {}),
                 "parent": ref.parent,
                 "is_container": False,
@@ -118,7 +124,9 @@ def build_graph(
     op_to_name.update(input_op_to_name)
     raw_edges: list[RawEdge] = []
     for ref in refs:
-        for src, src_tensor_idx, target_input_idx in _layer_input_sources(ref.layer, op_to_name):
+        for src, src_tensor_idx, target_input_idx in _layer_input_sources(
+            ref.layer, op_to_name
+        ):
             raw_edges.append(
                 RawEdge(
                     source=src,
@@ -162,12 +170,18 @@ def build_graph(
         for name in descendants:
             ref = ref_by_name[name]
             try:
-                tensors = ref.layer.input if isinstance(ref.layer.input, list) else [ref.layer.input]
+                tensors = (
+                    ref.layer.input
+                    if isinstance(ref.layer.input, list)
+                    else [ref.layer.input]
+                )
             except Exception:
                 tensors = []
             for tensor in tensors:
                 history = getattr(tensor, "_keras_history", None)
-                op = getattr(history, "operation", None) if history is not None else None
+                op = (
+                    getattr(history, "operation", None) if history is not None else None
+                )
                 if op is None:
                     continue
                 port_idx = in_port_ops.get(id(op))
@@ -194,7 +208,9 @@ def build_graph(
 
         # Remove direct container boundary edges.
         expanded_edges = {
-            e for e in expanded_edges if not ((e[0] == container) or (e[1] == container))
+            e
+            for e in expanded_edges
+            if not ((e[0] == container) or (e[1] == container))
         }
 
         # Reconnect predecessors to exact nested entry points by input index.
@@ -206,7 +222,11 @@ def build_graph(
             entry_targets = entry_by_port.get(target_port, set())
             if not entry_targets:
                 # Fallback: connect to all descendants with no internal predecessors.
-                entry_targets = {d for d in descendants if not ((incoming.get(d, set())) & descendants)}
+                entry_targets = {
+                    d
+                    for d in descendants
+                    if not ((incoming.get(d, set())) & descendants)
+                }
             for t in entry_targets:
                 expanded_edges.add((pred, t))
 
@@ -219,7 +239,11 @@ def build_graph(
             producer = sink_by_port.get(src_port)
             if producer is None:
                 # Fallback: connect from all nested sinks.
-                sinks = {d for d in descendants if not ((outgoing.get(d, set())) & descendants)}
+                sinks = {
+                    d
+                    for d in descendants
+                    if not ((outgoing.get(d, set())) & descendants)
+                }
                 for s in sinks:
                     expanded_edges.add((s, succ))
             else:
@@ -241,7 +265,11 @@ def build_graph(
         if ref.name in incoming_targets:
             continue
         try:
-            tensors = ref.layer.input if isinstance(ref.layer.input, list) else [ref.layer.input]
+            tensors = (
+                ref.layer.input
+                if isinstance(ref.layer.input, list)
+                else [ref.layer.input]
+            )
         except Exception:
             tensors = []
         for t in tensors:
@@ -283,13 +311,21 @@ def write_artifacts(
     (output_dir / "metrics.json").write_text(json.dumps(metrics, indent=2))
     (output_dir / "distributions.json").write_text(
         json.dumps(
-            {"activations": activation_distributions, "weights": weight_distributions, "biases": bias_distributions},
+            {
+                "activations": activation_distributions,
+                "weights": weight_distributions,
+                "biases": bias_distributions,
+            },
             indent=2,
         )
     )
     qparams_payload = {
         "activations": {k: _qparams_to_json(v) for k, v in activation_qparams.items()},
-        "weights": {k: _qparams_to_json(v["qparams"]) for k, v in weight_info.items() if v.get("qparams") is not None},
+        "weights": {
+            k: _qparams_to_json(v["qparams"])
+            for k, v in weight_info.items()
+            if v.get("qparams") is not None
+        },
         "biases": {
             k: _qparams_to_json(v["bias"]["qparams"])
             for k, v in weight_info.items()

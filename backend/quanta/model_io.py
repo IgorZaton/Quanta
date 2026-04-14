@@ -12,7 +12,9 @@ from .model_ir import LayerMeta, UnifiedModel
 class ModelLoader:
     """Loader step: read Keras model artifact."""
 
-    def load(self, model_path: str, custom_objects: dict[str, Any] | None = None) -> tf.keras.Model:
+    def load(
+        self, model_path: str, custom_objects: dict[str, Any] | None = None
+    ) -> tf.keras.Model:
         path = Path(model_path)
         if not path.exists():
             raise FileNotFoundError(f"Model file/folder not found: {path}")
@@ -25,7 +27,9 @@ class ModelLoader:
 
         # Quanta performs inference-only analysis; skip compile-time objects
         # (optimizer/loss/metrics) to reduce custom object requirements.
-        model = tf.keras.models.load_model(path, custom_objects=custom_objects, compile=False)
+        model = tf.keras.models.load_model(
+            path, custom_objects=custom_objects, compile=False
+        )
         return _ensure_unique_layer_names(model)
 
 
@@ -33,7 +37,9 @@ class ModelConverter:
     """Converter step: convert loaded Keras model into UnifiedModel IR."""
 
     def convert(self, model: tf.keras.Model) -> UnifiedModel:
-        return UnifiedModel(model=model, metadata=self._metadata_from_keras(model), graph=None)
+        return UnifiedModel(
+            model=model, metadata=self._metadata_from_keras(model), graph=None
+        )
 
     def _metadata_from_keras(self, model: tf.keras.Model) -> list[LayerMeta]:
         meta: list[LayerMeta] = []
