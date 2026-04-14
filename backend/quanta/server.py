@@ -128,6 +128,10 @@ def create_app(
                 global_activation_mode=activation_mode,
                 layer_weight_modes=layer_weight_modes,
                 layer_activation_modes=layer_activation_modes,
+                final_artifact_profile=runtime_config.get(
+                    "final_artifact_profile", "minimal"
+                ),
+                max_cached_runs=runtime_config.get("max_cached_runs", 3),
             )
         )
         strategy_roots[key] = run_dir
@@ -200,6 +204,19 @@ def create_app(
         layer_weight_modes: str = "{}",
         layer_activation_modes: str = "{}",
     ):
+        root = _ensure_strategy(
+            range_mode,
+            weight_mode,
+            activation_mode,
+            layer_weight_modes,
+            layer_activation_modes,
+        )
+        dist_path = root / "distributions.json"
+        if not dist_path.exists():
+            raise HTTPException(
+                status_code=409,
+                detail="Distributions are not available for this finalized run profile",
+            )
         payload = _read_json(
             "distributions.json",
             range_mode,

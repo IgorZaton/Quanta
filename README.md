@@ -56,6 +56,9 @@ Useful flags:
 - `--port 8000`
 - `--batch-size 32`
 - `--max-samples 512`
+- `--final-artifact-profile minimal|full` (default: `minimal`)
+- `--store-distributions` (shortcut for `--final-artifact-profile full`)
+- `--max-cached-runs 1`
 - `--test` (use bundled MNIST CNN + MNIST dataset)
 - `--cpu-only`
 - `--no-ui`
@@ -85,12 +88,22 @@ python scripts/train_mnist_cnn.py
 
 ## Artifacts
 
-Each run writes artifacts to `.quanta/run_YYYYMMDD_HHMMSS`:
+Quanta uses a two-phase cache lifecycle:
+
+- Active run cache: `.quanta/tmp_run_<id>/` stores full artifacts while the run is active (UI/API uses this full cache).
+- Finalized run cache: `.quanta/run_<id>/` keeps compact artifacts for persisted final state.
+
+By default (`--final-artifact-profile minimal`), finalized runs include:
 
 - `graph.json`
 - `metrics.json`
-- `distributions.json`
 - `qparams.json`
+- `estimates.json`
+- `run_meta.json`
+
+If you enable `--final-artifact-profile full` (or `--store-distributions`), finalized runs also include `distributions.json`.
+
+Temporary `tmp_run_*` directories are removed when the process exits, and finalized `run_*` directories are retained according to `--max-cached-runs` (default `1`, latest setting only).
 
 Dataset analysis outputs (for richer EDA/statistics) are planned and tracked in `TODO.md`.
 

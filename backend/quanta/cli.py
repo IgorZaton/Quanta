@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+import atexit
 import importlib
 import importlib.util
 from importlib import resources
@@ -51,6 +52,23 @@ def build_parser() -> argparse.ArgumentParser:
         choices=["int2", "int4", "int8", "int12", "int16", "fp16", "fp32"],
         default="int8",
         help="Global activation precision mode",
+    )
+    parser.add_argument(
+        "--final-artifact-profile",
+        choices=["minimal", "full"],
+        default="minimal",
+        help="Storage profile for finalized run artifacts",
+    )
+    parser.add_argument(
+        "--store-distributions",
+        action="store_true",
+        help="Store distributions in finalized run artifacts (equivalent to --final-artifact-profile full)",
+    )
+    parser.add_argument(
+        "--max-cached-runs",
+        type=int,
+        default=3,
+        help="How many finalized run_* directories to retain",
     )
     parser.add_argument(
         "--cpu-only",
@@ -203,9 +221,30 @@ def main() -> None:
         raise SystemExit("--batch-size must be > 0")
     if args.max_samples is not None and args.max_samples <= 0:
         raise SystemExit("--max-samples must be > 0 when provided")
+    if args.max_cached_runs <= 0:
+        raise SystemExit("--max-cached-runs must be > 0")
     if args.cpu_only or args.test:
         os.environ["CUDA_VISIBLE_DEVICES"] = "-1"
     custom_objects = _load_custom_objects(args)
+    final_artifact_profile = (
+        "full" if args.store_distributions else args.final_artifact_profile
+    )
+    output_root = ".quanta"
+
+    def _cleanup_tmp_runs() -> None:
+        root = Path(output_root)
+        if not root.exists():
+            return
+        for tmp_dir in root.glob("tmp_run_*"):
+            if tmp_dir.is_dir():
+                try:
+                    import shutil
+
+                    shutil.rmtree(tmp_dir, ignore_errors=True)
+                except Exception:
+                    continue
+
+    atexit.register(_cleanup_tmp_runs)
 
     # Keep imports lazy so `quanta --help` works even if heavy ML deps are not installed yet.
     from .pipeline import PipelineConfig, run_pipeline
@@ -239,6 +278,9 @@ def main() -> None:
                 global_weight_mode=args.weight_mode,
                 global_activation_mode=args.activation_mode,
                 custom_objects=custom_objects,
+                final_artifact_profile=final_artifact_profile,
+                max_cached_runs=args.max_cached_runs,
+                output_root=output_root,
             )
         )
     except Exception as exc:
@@ -255,10 +297,12 @@ def main() -> None:
             "batch_size": args.batch_size,
             "max_samples": args.max_samples,
             "intentionally_bad_layers_count": 2 if args.test_bad else 0,
-            "output_root": ".quanta",
+            "output_root": output_root,
             "range_mode": args.range_mode,
             "global_weight_mode": args.weight_mode,
             "global_activation_mode": args.activation_mode,
+            "final_artifact_profile": final_artifact_profile,
+            "max_cached_runs": args.max_cached_runs,
             "layer_weight_modes": {},
             "layer_activation_modes": {},
         },

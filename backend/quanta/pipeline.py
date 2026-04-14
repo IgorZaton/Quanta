@@ -9,7 +9,7 @@ from typing import Any
 import numpy as np
 
 from .adapters import DatasetAdapter
-from .artifacts import build_graph, write_artifacts
+from .artifacts import build_graph, finalize_run_artifacts, write_artifacts
 from .estimates import estimate_tradeoffs
 from .metrics import compute_metrics
 from .model_io import ModelConverter, ModelLoader
@@ -30,7 +30,8 @@ class PipelineConfig:
     layer_weight_modes: dict[str, str] | None = None
     layer_activation_modes: dict[str, str] | None = None
     custom_objects: dict[str, Any] | None = None
-    max_cached_runs: int = 3
+    final_artifact_profile: str = "minimal"
+    max_cached_runs: int = 1
 
 
 def _prune_previous_runs(
@@ -42,7 +43,9 @@ def _prune_previous_runs(
     run_dirs = [
         child
         for child in output_root.iterdir()
-        if child.is_dir() and child.name.startswith("run_")
+        if child.is_dir()
+        and child.name.startswith("run_")
+        and (child / "run_meta.json").exists()
     ]
     run_dirs.sort(key=lambda p: p.stat().st_mtime, reverse=True)
 
@@ -53,6 +56,11 @@ def _prune_previous_runs(
 
 
 def run_pipeline(config: PipelineConfig) -> Path:
+    if config.final_artifact_profile not in {"minimal", "full"}:
+        raise ValueError(
+            f"Unsupported final artifact profile: {config.final_artifact_profile}"
+        )
+
     loader = ModelLoader()
     converter = ModelConverter()
     unified_model = converter.convert(
@@ -104,9 +112,12 @@ def run_pipeline(config: PipelineConfig) -> Path:
 
     output_root = Path(config.output_root)
     output_root.mkdir(parents=True, exist_ok=True)
-    run_dir = output_root / datetime.now().strftime("run_%Y%m%d_%H%M%S_%f")
+    run_id = datetime.now().strftime("%Y%m%d_%H%M%S_%f")
+    started_at = datetime.utcnow().isoformat() + "Z"
+    tmp_run_dir = output_root / f"tmp_run_{run_id}"
+    run_dir = output_root / f"run_{run_id}"
     write_artifacts(
-        run_dir,
+        tmp_run_dir,
         graph=graph,
         metrics=metrics,
         activation_distributions=result["activation_distributions"],
@@ -116,8 +127,18 @@ def run_pipeline(config: PipelineConfig) -> Path:
         weight_info=result["weight_info"],
         layer_modes=layer_modes,
         estimates=estimates,
+        include_distributions=True,
+    )
+    completed_at = datetime.utcnow().isoformat() + "Z"
+    finalize_run_artifacts(
+        tmp_dir=tmp_run_dir,
+        final_dir=run_dir,
+        profile=config.final_artifact_profile,
+        run_id=run_id,
+        started_at=started_at,
+        completed_at=completed_at,
     )
     _prune_previous_runs(
         output_root, keep_runs=max(1, config.max_cached_runs), preserve={run_dir}
     )
-    return run_dir
+    return tmp_run_dir

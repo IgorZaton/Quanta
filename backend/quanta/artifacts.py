@@ -305,20 +305,22 @@ def write_artifacts(
     weight_info: dict[str, Any],
     layer_modes: dict[str, Any] | None = None,
     estimates: dict[str, Any] | None = None,
+    include_distributions: bool = True,
 ) -> None:
     output_dir.mkdir(parents=True, exist_ok=True)
     (output_dir / "graph.json").write_text(json.dumps(graph, indent=2))
     (output_dir / "metrics.json").write_text(json.dumps(metrics, indent=2))
-    (output_dir / "distributions.json").write_text(
-        json.dumps(
-            {
-                "activations": activation_distributions,
-                "weights": weight_distributions,
-                "biases": bias_distributions,
-            },
-            indent=2,
+    if include_distributions:
+        (output_dir / "distributions.json").write_text(
+            json.dumps(
+                {
+                    "activations": activation_distributions,
+                    "weights": weight_distributions,
+                    "biases": bias_distributions,
+                },
+                indent=2,
+            )
         )
-    )
     qparams_payload = {
         "activations": {k: _qparams_to_json(v) for k, v in activation_qparams.items()},
         "weights": {
@@ -335,3 +337,40 @@ def write_artifacts(
     }
     (output_dir / "qparams.json").write_text(json.dumps(qparams_payload, indent=2))
     (output_dir / "estimates.json").write_text(json.dumps(estimates or {}, indent=2))
+
+
+def finalize_run_artifacts(
+    tmp_dir: Path,
+    final_dir: Path,
+    profile: str,
+    run_id: str,
+    started_at: str,
+    completed_at: str,
+) -> None:
+    final_dir.mkdir(parents=True, exist_ok=True)
+
+    required_files = ("graph.json", "metrics.json", "qparams.json", "estimates.json")
+    optional_files = ("distributions.json",) if profile == "full" else ()
+    copied_files: list[str] = []
+
+    for name in required_files + optional_files:
+        src = tmp_dir / name
+        if not src.exists():
+            if name in required_files:
+                raise FileNotFoundError(
+                    f"Required artifact is missing in tmp run: {src}"
+                )
+            continue
+        dst = final_dir / name
+        dst.write_text(src.read_text())
+        copied_files.append(name)
+
+    run_meta = {
+        "status": "complete",
+        "run_id": run_id,
+        "profile": profile,
+        "started_at": started_at,
+        "completed_at": completed_at,
+        "artifacts": copied_files,
+    }
+    (final_dir / "run_meta.json").write_text(json.dumps(run_meta, indent=2))
