@@ -1,3 +1,0 @@
-quanta
-scripts
-tests

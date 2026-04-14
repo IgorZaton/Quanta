@@ -20,7 +20,7 @@ jobs:
       - name: Install backend + test dependencies
         run: |
           python -m pip install --upgrade pip
-          python -m pip install -e ./backend pytest
+          python -m pip install -e ./backend[dev]
 
       - name: Run backend tests
         run: pytest -q backend/tests

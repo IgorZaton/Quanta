@@ -23,6 +23,16 @@ cd backend
 pip install -e .
 ```
 
+For a full development/test environment from a clean venv:
+
+```bash
+python -m venv .venv
+. .venv/bin/activate
+python -m pip install --upgrade pip
+python -m pip install -e ./backend[dev]
+python -m pytest -q backend/tests
+```
+
 ### Frontend (optional but recommended)
 
 ```bash
