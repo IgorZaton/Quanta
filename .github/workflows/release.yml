@@ -25,6 +25,8 @@ jobs:
           python-version: "3.11"
 
       - name: Build release wheel
+        env:
+          RELEASE_VERSION: ${{ github.event.release.tag_name }}
         run: ./scripts/release.sh
 
       - name: Upload Python distribution artifacts
@@ -33,3 +35,8 @@ jobs:
           name: quanta-dist
           path: backend/dist/*
           if-no-files-found: error
+
+      - name: Attach wheel to GitHub Release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: gh release upload "${{ github.event.release.tag_name }}" backend/dist/*.whl

@@ -6,6 +6,7 @@ FRONTEND_DIR="$ROOT_DIR/frontend"
 BACKEND_DIR="$ROOT_DIR/backend"
 WEB_DIR="$BACKEND_DIR/quanta/web"
 DIST_DIR="$BACKEND_DIR/dist"
+RELEASE_VERSION="${RELEASE_VERSION:-}"
 
 echo "[release] Building frontend bundle..."
 cd "$FRONTEND_DIR"
@@ -29,6 +30,35 @@ echo "[release] Building Python distribution artifacts..."
 cd "$BACKEND_DIR"
 python -m pip install --upgrade pip build
 rm -rf "$DIST_DIR"
+
+if [[ -n "$RELEASE_VERSION" ]]; then
+  if [[ "$RELEASE_VERSION" =~ ^v ]]; then
+    RELEASE_VERSION="${RELEASE_VERSION#v}"
+  fi
+  echo "[release] Setting backend/pyproject.toml version to $RELEASE_VERSION"
+  python - "$RELEASE_VERSION" <<'PY'
+from pathlib import Path
+import re
+import sys
+
+version = sys.argv[1]
+if not re.fullmatch(r"\d+\.\d+\.\d+([a-zA-Z0-9.\-+]*)?", version):
+    raise SystemExit(f"Invalid RELEASE_VERSION: {version}")
+
+pyproject = Path("pyproject.toml")
+text = pyproject.read_text()
+updated, count = re.subn(
+    r'(?m)^version\s*=\s*".*"$',
+    f'version = "{version}"',
+    text,
+    count=1,
+)
+if count != 1:
+    raise SystemExit("Failed to update version in pyproject.toml")
+pyproject.write_text(updated)
+PY
+fi
+
 python -m build
 
 echo "[release] Verifying wheel has bundled frontend..."
