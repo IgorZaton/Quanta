@@ -70,8 +70,20 @@ Useful flags:
 - `--store-distributions` (shortcut for `--final-artifact-profile full`)
 - `--max-cached-runs 1`
 - `--test` (use bundled MNIST CNN + MNIST dataset)
+- `--load-run /path/to/.quanta/run_<id>` (serve an existing finalized run without recomputation)
 - `--cpu-only`
 - `--no-ui`
+
+Load a previously finalized run directory:
+
+```bash
+cd backend
+quanta --load-run /path/to/project/.quanta/run_20260415_101010_123456
+```
+
+`--load-run` is strict: startup fails if required artifacts are missing/incompatible. In load mode, do not pass `--model`, `--dataset`, or `--test`.
+
+Runs finalized via the UI **Finalize Run** button always include `distributions.json` and `latest_state` metadata, so they are fully restorable with plots and the exact quantization settings that were active at finalize time.
 
 ## Built-in Test Mode
 
@@ -110,6 +122,22 @@ By default (`--final-artifact-profile minimal`), finalized runs include:
 - `qparams.json`
 - `estimates.json`
 - `run_meta.json`
+
+`--load-run` validates that required artifacts are present and that `run_meta.json` includes compatible metadata (`run_id`, `profile`, `artifacts`, `latest_state`).
+
+## Runtime Strategy Cache
+
+During an active session, Quanta caches computed strategies (each unique combination of range mode, precision modes, and per-layer overrides). When you change precision settings in the UI, previously computed results are served instantly from cache. The cache is hybrid: in-memory for speed, with `strategy_cache.json` on disk as source of truth.
+
+## Finalize Run
+
+Click **Finalize Run** in the UI toolbar to:
+
+1. Persist the current UI quantization state as the definitive snapshot.
+2. Write a full finalized run directory (including `distributions.json` for plots and `latest_state` in `run_meta.json`).
+3. Enable the **Close** button to safely shut down the server.
+
+The finalized run can later be loaded with `--load-run`, fully restoring plots and the exact quantization settings.
 
 If you enable `--final-artifact-profile full` (or `--store-distributions`), finalized runs also include `distributions.json`.
 

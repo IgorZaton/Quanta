@@ -32,6 +32,7 @@ class PipelineConfig:
     custom_objects: dict[str, Any] | None = None
     final_artifact_profile: str = "minimal"
     max_cached_runs: int = 1
+    skip_finalize: bool = False
 
 
 def _prune_previous_runs(
@@ -130,15 +131,16 @@ def run_pipeline(config: PipelineConfig) -> Path:
         include_distributions=True,
     )
     completed_at = datetime.utcnow().isoformat() + "Z"
-    finalize_run_artifacts(
-        tmp_dir=tmp_run_dir,
-        final_dir=run_dir,
-        profile=config.final_artifact_profile,
-        run_id=run_id,
-        started_at=started_at,
-        completed_at=completed_at,
-    )
-    _prune_previous_runs(
-        output_root, keep_runs=max(1, config.max_cached_runs), preserve={run_dir}
-    )
+    if not config.skip_finalize:
+        finalize_run_artifacts(
+            tmp_dir=tmp_run_dir,
+            final_dir=run_dir,
+            profile=config.final_artifact_profile,
+            run_id=run_id,
+            started_at=started_at,
+            completed_at=completed_at,
+        )
+        _prune_previous_runs(
+            output_root, keep_runs=max(1, config.max_cached_runs), preserve={run_dir}
+        )
     return tmp_run_dir

@@ -10,7 +10,7 @@ import os
 from pathlib import Path
 import sys
 import webbrowser
-from typing import Any
+from typing import Any, Callable
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -30,6 +30,11 @@ def build_parser() -> argparse.ArgumentParser:
         "--test-bad",
         action="store_true",
         help="Intentionally quantize two layers badly (debug mode)",
+    )
+    parser.add_argument(
+        "--load-run",
+        required=False,
+        help="Load and serve an existing run directory without recomputation",
     )
     parser.add_argument("--host", default="127.0.0.1")
     parser.add_argument("--port", type=int, default=8000)
@@ -215,6 +220,105 @@ def _load_custom_objects(args: argparse.Namespace) -> dict[str, Any]:
     return merged
 
 
+LoadRunCheck = Callable[[Path, dict[str, Any]], None]
+
+
+def _check_run_dir_exists(run_dir: Path, context: dict[str, Any]) -> None:
+    del context
+    if not run_dir.exists() or not run_dir.is_dir():
+        raise SystemExit(
+            f"--load-run path does not exist or is not a directory: {run_dir}"
+        )
+
+
+def _check_required_artifact_files(run_dir: Path, context: dict[str, Any]) -> None:
+    required_artifacts = context["required_artifacts"]
+    missing = [name for name in required_artifacts if not (run_dir / name).exists()]
+    if missing:
+        raise SystemExit(
+            f"--load-run directory is missing required artifacts: {', '.join(missing)}"
+        )
+
+
+def _check_run_meta_json(run_dir: Path, context: dict[str, Any]) -> None:
+    run_meta_path = run_dir / "run_meta.json"
+    if not run_meta_path.exists():
+        raise SystemExit("--load-run directory is missing required run_meta.json")
+    try:
+        run_meta = json.loads(run_meta_path.read_text())
+    except Exception as exc:
+        raise SystemExit(f"run_meta.json is not valid JSON: {exc}") from exc
+    if not isinstance(run_meta, dict):
+        raise SystemExit("run_meta.json must be a JSON object")
+    context["run_meta"] = run_meta
+
+
+def _check_required_run_meta_fields(run_dir: Path, context: dict[str, Any]) -> None:
+    del run_dir
+    run_meta = context["run_meta"]
+    required_meta_fields = context["required_meta_fields"]
+    missing_meta = [name for name in required_meta_fields if name not in run_meta]
+    if missing_meta:
+        raise SystemExit(
+            f"run_meta.json is missing required fields: {', '.join(missing_meta)}"
+        )
+    if not isinstance(run_meta.get("artifacts"), list):
+        raise SystemExit("run_meta.json field 'artifacts' must be a list")
+
+
+def _check_run_meta_artifacts_compatible(
+    run_dir: Path, context: dict[str, Any]
+) -> None:
+    del run_dir
+    required_artifacts = context["required_artifacts"]
+    artifacts = set(context["run_meta"]["artifacts"])
+    missing_declared = [name for name in required_artifacts if name not in artifacts]
+    if missing_declared:
+        raise SystemExit(
+            "run_meta.json artifacts list is incompatible; missing required entries: "
+            + ", ".join(missing_declared)
+        )
+
+
+def _check_optional_artifacts(run_dir: Path, context: dict[str, Any]) -> None:
+    warnings = context["warnings"]
+    for name in context.get("optional_artifacts", ()):
+        if not (run_dir / name).exists():
+            warnings.append(
+                f"Optional artifact missing: {name} (some features may be unavailable)"
+            )
+    if "latest_state" not in context.get("run_meta", {}):
+        warnings.append(
+            "run_meta.json has no latest_state; UI will start with default settings"
+        )
+
+
+def _validate_load_run_dir(load_run: str) -> tuple[Path, dict[str, Any], list[str]]:
+    run_dir = Path(load_run).expanduser().resolve()
+    context: dict[str, Any] = {
+        "required_artifacts": (
+            "graph.json",
+            "metrics.json",
+            "qparams.json",
+            "estimates.json",
+        ),
+        "optional_artifacts": ("distributions.json",),
+        "required_meta_fields": ("run_id", "profile", "artifacts"),
+        "warnings": [],
+    }
+    checks: tuple[LoadRunCheck, ...] = (
+        _check_run_dir_exists,
+        _check_required_artifact_files,
+        _check_run_meta_json,
+        _check_required_run_meta_fields,
+        _check_run_meta_artifacts_compatible,
+        _check_optional_artifacts,
+    )
+    for check in checks:
+        check(run_dir, context)
+    return run_dir, context["run_meta"], context["warnings"]
+
+
 def main() -> None:
     args = build_parser().parse_args()
     if args.batch_size <= 0:
@@ -225,6 +329,7 @@ def main() -> None:
         raise SystemExit("--max-cached-runs must be > 0")
     if args.cpu_only or args.test:
         os.environ["CUDA_VISIBLE_DEVICES"] = "-1"
+    has_compute_args = bool(args.model or args.dataset or args.test)
     custom_objects = _load_custom_objects(args)
     final_artifact_profile = (
         "full" if args.store_distributions else args.final_artifact_profile
@@ -246,52 +351,31 @@ def main() -> None:
 
     atexit.register(_cleanup_tmp_runs)
 
-    # Keep imports lazy so `quanta --help` works even if heavy ML deps are not installed yet.
-    from .pipeline import PipelineConfig, run_pipeline
+    from .strategy_cache import StrategyCache
 
-    try:
+    def _resolve_compute_args() -> tuple[str, str]:
+        """Return (model_path, dataset_path) from --test or --model/--dataset."""
         if args.test:
-            model_path, dataset_path = _bundled_test_assets()
+            mp, dp = _bundled_test_assets()
             if args.max_samples is None:
                 args.max_samples = 64
-        else:
-            if not args.model or not args.dataset:
-                raise SystemExit(
-                    "--model and --dataset are required unless --test is provided"
-                )
-            if not Path(args.model).exists():
-                raise SystemExit(f"Model path does not exist: {args.model}")
-            if not Path(args.dataset).exists():
-                raise SystemExit(f"Dataset path does not exist: {args.dataset}")
-            if not str(args.dataset).endswith(".npy"):
-                raise SystemExit("--dataset must point to a .npy file")
-            model_path, dataset_path = args.model, args.dataset
-
-        run_dir = run_pipeline(
-            PipelineConfig(
-                model_path=model_path,
-                dataset_path=dataset_path,
-                batch_size=args.batch_size,
-                max_samples=args.max_samples,
-                intentionally_bad_layers_count=2 if args.test_bad else 0,
-                range_mode=args.range_mode,
-                global_weight_mode=args.weight_mode,
-                global_activation_mode=args.activation_mode,
-                custom_objects=custom_objects,
-                final_artifact_profile=final_artifact_profile,
-                max_cached_runs=args.max_cached_runs,
-                output_root=output_root,
+            return mp, dp
+        if not args.model or not args.dataset:
+            raise SystemExit(
+                "--model and --dataset are required unless --test is provided"
             )
-        )
-    except Exception as exc:
-        print(f"Quanta failed: {exc}", file=sys.stderr)
-        raise SystemExit(1) from exc
+        if not Path(args.model).exists():
+            raise SystemExit(f"Model path does not exist: {args.model}")
+        if not Path(args.dataset).exists():
+            raise SystemExit(f"Dataset path does not exist: {args.dataset}")
+        if not str(args.dataset).endswith(".npy"):
+            raise SystemExit("--dataset must point to a .npy file")
+        return args.model, args.dataset
 
-    from .server import create_app
-
-    app = create_app(
-        str(run_dir),
-        runtime_config={
+    def _build_runtime_config(
+        model_path: str, dataset_path: str, **overrides: Any
+    ) -> dict[str, Any]:
+        cfg: dict[str, Any] = {
             "model_path": model_path,
             "dataset_path": dataset_path,
             "batch_size": args.batch_size,
@@ -305,7 +389,171 @@ def main() -> None:
             "max_cached_runs": args.max_cached_runs,
             "layer_weight_modes": {},
             "layer_activation_modes": {},
-        },
+        }
+        cfg.update(overrides)
+        return cfg
+
+    def _build_source_config(model_path: str, dataset_path: str) -> dict[str, Any]:
+        """Serializable config stored in run_meta.json for session restore."""
+        cfg: dict[str, Any] = {
+            "model_path": str(Path(model_path).resolve()),
+            "dataset_path": str(Path(dataset_path).resolve()),
+            "batch_size": args.batch_size,
+            "max_samples": args.max_samples,
+            "output_root": output_root,
+            "max_cached_runs": args.max_cached_runs,
+            "final_artifact_profile": final_artifact_profile,
+        }
+        if args.custom_objects_file:
+            cfg["custom_objects_file"] = str(Path(args.custom_objects_file).resolve())
+        if args.custom_objects_module:
+            cfg["custom_objects_module"] = args.custom_objects_module
+        if args.custom_objects:
+            cfg["custom_objects_inline"] = args.custom_objects
+        return cfg
+
+    def _restore_source_config(
+        sc: dict[str, Any],
+    ) -> tuple[dict[str, Any], dict[str, Any]]:
+        """From a stored source_config, rebuild runtime_config + custom_objects.
+
+        Raises SystemExit if referenced files no longer exist.
+        """
+        mp = sc.get("model_path", "")
+        dp = sc.get("dataset_path", "")
+        if not mp or not dp:
+            raise SystemExit(
+                "Stored source_config is missing model_path / dataset_path — "
+                "provide --model and --dataset explicitly"
+            )
+        if not Path(mp).exists():
+            raise SystemExit(f"Stored model_path no longer exists: {mp}")
+        if not Path(dp).exists():
+            raise SystemExit(f"Stored dataset_path no longer exists: {dp}")
+
+        rc: dict[str, Any] = {
+            "model_path": mp,
+            "dataset_path": dp,
+            "batch_size": sc.get("batch_size", args.batch_size),
+            "max_samples": sc.get("max_samples", args.max_samples),
+            "intentionally_bad_layers_count": 0,
+            "output_root": sc.get("output_root", output_root),
+            "range_mode": args.range_mode,
+            "global_weight_mode": args.weight_mode,
+            "global_activation_mode": args.activation_mode,
+            "final_artifact_profile": sc.get(
+                "final_artifact_profile", final_artifact_profile
+            ),
+            "max_cached_runs": sc.get("max_cached_runs", args.max_cached_runs),
+            "layer_weight_modes": {},
+            "layer_activation_modes": {},
+        }
+
+        co: dict[str, Any] = {}
+        co_file = sc.get("custom_objects_file")
+        if co_file and Path(co_file).exists():
+            payload = json.loads(Path(co_file).read_text())
+            co.update(
+                _parse_custom_object_specs(payload, "source_config.custom_objects_file")
+            )
+        co_module = sc.get("custom_objects_module")
+        if co_module:
+            try:
+                mod = importlib.import_module(co_module)
+                if hasattr(mod, "CUSTOM_OBJECTS"):
+                    co.update(getattr(mod, "CUSTOM_OBJECTS"))
+                elif hasattr(mod, "get_custom_objects"):
+                    co.update(getattr(mod, "get_custom_objects")())
+            except Exception:
+                print(
+                    f"Warning: could not reload custom_objects_module: {co_module}",
+                    file=sys.stderr,
+                )
+        co_inline = sc.get("custom_objects_inline")
+        if co_inline:
+            try:
+                payload = json.loads(co_inline)
+                co.update(
+                    _parse_custom_object_specs(
+                        payload, "source_config.custom_objects_inline"
+                    )
+                )
+            except Exception:
+                print(
+                    "Warning: could not reload inline custom_objects", file=sys.stderr
+                )
+
+        return rc, co
+
+    try:
+        if args.load_run:
+            run_dir, run_meta, load_warnings = _validate_load_run_dir(args.load_run)
+            for w in load_warnings:
+                print(f"Warning: {w}", file=sys.stderr)
+            loaded_from_run = True
+            strategy_cache = StrategyCache.from_finalized_run(run_dir)
+
+            source_config = run_meta.get("source_config", {})
+            if has_compute_args:
+                model_path, dataset_path = _resolve_compute_args()
+                runtime_config = _build_runtime_config(model_path, dataset_path)
+            elif source_config:
+                runtime_config, custom_objects = _restore_source_config(source_config)
+            else:
+                runtime_config = None
+
+            if runtime_config:
+                print(
+                    f"Loaded run from {run_dir} (interactive: recompute enabled)",
+                    file=sys.stderr,
+                )
+            else:
+                print(
+                    f"Loaded run from {run_dir} (read-only: no compute config available)",
+                    file=sys.stderr,
+                )
+        else:
+            if not has_compute_args:
+                raise SystemExit(
+                    "--model and --dataset (or --test) are required unless --load-run is provided"
+                )
+            from .pipeline import PipelineConfig, run_pipeline
+
+            model_path, dataset_path = _resolve_compute_args()
+            run_dir = run_pipeline(
+                PipelineConfig(
+                    model_path=model_path,
+                    dataset_path=dataset_path,
+                    batch_size=args.batch_size,
+                    max_samples=args.max_samples,
+                    intentionally_bad_layers_count=2 if args.test_bad else 0,
+                    range_mode=args.range_mode,
+                    global_weight_mode=args.weight_mode,
+                    global_activation_mode=args.activation_mode,
+                    custom_objects=custom_objects,
+                    final_artifact_profile=final_artifact_profile,
+                    max_cached_runs=args.max_cached_runs,
+                    output_root=output_root,
+                )
+            )
+            runtime_config = _build_runtime_config(model_path, dataset_path)
+            loaded_from_run = False
+            strategy_cache = StrategyCache(Path(output_root))
+            strategy_cache.set_source_config(
+                _build_source_config(model_path, dataset_path)
+            )
+    except Exception as exc:
+        print(f"Quanta failed: {exc}", file=sys.stderr)
+        raise SystemExit(1) from exc
+
+    from .server import create_app
+
+    app = create_app(
+        str(run_dir),
+        runtime_config=runtime_config,
+        loaded_from_run=loaded_from_run,
+        strategy_cache=strategy_cache,
+        custom_objects=custom_objects or None,
     )
     url = f"http://{args.host}:{args.port}"
     print(f"Artifacts generated in: {run_dir}")

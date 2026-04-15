@@ -349,8 +349,14 @@ def finalize_run_artifacts(
 ) -> None:
     final_dir.mkdir(parents=True, exist_ok=True)
 
-    required_files = ("graph.json", "metrics.json", "qparams.json", "estimates.json")
-    optional_files = ("distributions.json",) if profile == "full" else ()
+    required_files = (
+        "graph.json",
+        "metrics.json",
+        "qparams.json",
+        "estimates.json",
+        "distributions.json",
+    )
+    optional_files: tuple[str, ...] = ()
     copied_files: list[str] = []
 
     for name in required_files + optional_files:

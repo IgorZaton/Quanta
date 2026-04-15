@@ -1,6 +1,9 @@
 from __future__ import annotations
 
 import json
+import os
+import signal
+import threading
 from importlib import resources
 from pathlib import Path
 from typing import Any
@@ -9,19 +12,31 @@ from fastapi import FastAPI, HTTPException
 from fastapi.responses import HTMLResponse
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
+from pydantic import BaseModel
+
+from .strategy_cache import (
+    StrategyCache,
+    normalize_strategy_key,
+    strategy_key_from_state,
+)
+
+
+class ActiveStatePayload(BaseModel):
+    range_mode: str = "minmax"
+    global_weight_mode: str = "int8"
+    global_activation_mode: str = "int8"
+    layer_weight_modes: dict[str, str] = {}
+    layer_activation_modes: dict[str, str] = {}
 
 
 def create_app(
-    artifact_dir: str, runtime_config: dict[str, Any] | None = None
+    artifact_dir: str,
+    runtime_config: dict[str, Any] | None = None,
+    loaded_from_run: bool = False,
+    strategy_cache: StrategyCache | None = None,
+    custom_objects: dict[str, Any] | None = None,
 ) -> FastAPI:
     base_root = Path(artifact_dir)
-    strategy_roots: dict[str, Path] = {}
-    initial_key = (
-        f"{runtime_config.get('range_mode', 'minmax')}|{runtime_config.get('global_weight_mode', 'int8')}|{runtime_config.get('global_activation_mode', 'int8')}|{{}}|{{}}"
-        if runtime_config
-        else "minmax|int8|int8|{}|{}"
-    )
-    strategy_roots[initial_key] = base_root
     app = FastAPI(title="Quanta API")
     app.add_middleware(
         CORSMiddleware,
@@ -30,6 +45,35 @@ def create_app(
         allow_headers=["*"],
     )
 
+    cache = strategy_cache
+    if cache is None:
+        cache = StrategyCache(base_root.parent)
+
+    initial_state: dict[str, Any] = {
+        "range_mode": runtime_config.get("range_mode", "minmax")
+        if runtime_config
+        else "minmax",
+        "global_weight_mode": runtime_config.get("global_weight_mode", "int8")
+        if runtime_config
+        else "int8",
+        "global_activation_mode": runtime_config.get("global_activation_mode", "int8")
+        if runtime_config
+        else "int8",
+        "layer_weight_modes": runtime_config.get("layer_weight_modes", {})
+        if runtime_config
+        else {},
+        "layer_activation_modes": runtime_config.get("layer_activation_modes", {})
+        if runtime_config
+        else {},
+    }
+    initial_key = strategy_key_from_state(initial_state)
+    if cache.get_strategy_root(initial_key) is None:
+        cache.upsert_strategy(initial_key, base_root)
+    if not cache.get_latest_state():
+        cache.set_latest_state(initial_state)
+
+    shutting_down = False
+
     def _strategy_key(
         strategy: str,
         weight_mode: str,
@@ -37,7 +81,19 @@ def create_app(
         layer_weight_modes_json: str,
         layer_activation_modes_json: str,
     ) -> str:
-        return f"{strategy}|{weight_mode}|{activation_mode}|{layer_weight_modes_json}|{layer_activation_modes_json}"
+        try:
+            lw = json.loads(layer_weight_modes_json) if layer_weight_modes_json else {}
+        except Exception:
+            lw = {}
+        try:
+            la = (
+                json.loads(layer_activation_modes_json)
+                if layer_activation_modes_json
+                else {}
+            )
+        except Exception:
+            la = {}
+        return normalize_strategy_key(strategy, weight_mode, activation_mode, lw, la)
 
     def _ensure_strategy(
         strategy: str,
@@ -53,16 +109,15 @@ def create_app(
             layer_weight_modes_json,
             layer_activation_modes_json,
         )
-        if key in strategy_roots:
-            existing = strategy_roots[key]
-            if existing.exists():
-                return existing
-            # Cache entry may point to pruned run directory.
-            strategy_roots.pop(key, None)
+        existing = cache.get_strategy_root(key)
+        if existing is not None:
+            return existing
         if runtime_config is None:
             raise HTTPException(
                 status_code=400, detail=f"Configuration {key} is not available"
             )
+        if shutting_down:
+            raise HTTPException(status_code=503, detail="Server is shutting down")
         if strategy not in {"minmax", "clip99_99", "clip99_999"}:
             raise HTTPException(
                 status_code=400, detail=f"Unsupported range mode: {strategy}"
@@ -132,9 +187,11 @@ def create_app(
                     "final_artifact_profile", "minimal"
                 ),
                 max_cached_runs=runtime_config.get("max_cached_runs", 3),
+                custom_objects=custom_objects,
+                skip_finalize=True,
             )
         )
-        strategy_roots[key] = run_dir
+        cache.upsert_strategy(key, run_dir)
         return run_dir
 
     def _read_json(
@@ -274,6 +331,61 @@ def create_app(
             layer_weight_modes,
             layer_activation_modes,
         )
+
+    @app.get("/api/runtime")
+    def get_runtime():
+        latest = cache.get_latest_state()
+        return {
+            "run_id": cache.run_id,
+            "loaded_from_run": loaded_from_run,
+            "runtime_recompute_enabled": runtime_config is not None,
+            "finalized": cache.finalized,
+            "available_strategies": cache.strategy_keys,
+            "latest_state": latest,
+        }
+
+    @app.post("/api/runtime/active-state")
+    def set_active_state(payload: ActiveStatePayload):
+        state = payload.model_dump()
+        cache.set_latest_state(state)
+        return {"status": "ok"}
+
+    @app.post("/api/run/finalize")
+    def finalize_run():
+        nonlocal shutting_down
+        if cache.finalized:
+            return {
+                "status": "already_finalized",
+                "run_id": cache.run_id,
+            }
+        try:
+            final_dir = cache.materialize_finalized_snapshot()
+        except ValueError as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
+        return {
+            "status": "finalized",
+            "run_id": cache.run_id,
+            "finalized_path": str(final_dir),
+        }
+
+    @app.post("/api/run/close")
+    def close_run():
+        nonlocal shutting_down
+        if not cache.finalized:
+            raise HTTPException(
+                status_code=409,
+                detail="Cannot close: run has not been finalized yet",
+            )
+        shutting_down = True
+
+        def _deferred_shutdown():
+            import time
+
+            time.sleep(0.5)
+            os.kill(os.getpid(), signal.SIGTERM)
+
+        threading.Thread(target=_deferred_shutdown, daemon=True).start()
+        return {"status": "closing"}
 
     bundled_web = Path(str(resources.files("quanta.web")))
     frontend_dist = Path(__file__).resolve().parents[2] / "frontend" / "dist"
