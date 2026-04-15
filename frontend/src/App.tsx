@@ -1,7 +1,7 @@
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import ReactFlow, { Background, Controls, Edge, Node } from "react-flow-renderer";
 import { LayerDetail } from "./components/LayerDetail";
-import { GraphPayload, MetricKey } from "./types";
+import { FinalizeResponse, GraphPayload, MetricKey, RuntimePayload } from "./types";
 
 function layerTypeColor(layerType: string): string {
   const palette: Record<string, string> = {
@@ -49,11 +49,9 @@ function combinedSeverity(
   metric: MetricKey
 ): number {
   const absT = absoluteThresholds(metric);
-  // Hard gate: no highlight under absolute warn threshold.
   if (value < absT.warn) return 0;
   const rel = errorSeverity(value, maxError, goodThreshold);
   const abs = absoluteSeverity(value, absT);
-  // Above absolute threshold, keep relative gradation but never understate absolute severity.
   return Math.max(rel, abs);
 }
 
@@ -61,11 +59,14 @@ function isIntegerMode(mode: string): boolean {
   return mode.startsWith("int");
 }
 
+type PrecisionMode = "int2" | "int4" | "int8" | "int12" | "int16" | "fp16" | "fp32";
+type RangeMode = "minmax" | "clip99_99" | "clip99_999";
+
 export default function App() {
   const [metric, setMetric] = useState<MetricKey>("mae");
-  const [rangeMode, setRangeMode] = useState<"minmax" | "clip99_99" | "clip99_999">("minmax");
-  const [globalWeightPrecision, setGlobalWeightPrecision] = useState<"int2" | "int4" | "int8" | "int12" | "int16" | "fp16" | "fp32">("int8");
-  const [globalActivationPrecision, setGlobalActivationPrecision] = useState<"int2" | "int4" | "int8" | "int12" | "int16" | "fp16" | "fp32">("int8");
+  const [rangeMode, setRangeMode] = useState<RangeMode>("minmax");
+  const [globalWeightPrecision, setGlobalWeightPrecision] = useState<PrecisionMode>("int8");
+  const [globalActivationPrecision, setGlobalActivationPrecision] = useState<PrecisionMode>("int8");
   const [layerWeightModes, setLayerWeightModes] = useState<Record<string, string>>({});
   const [layerActivationModes, setLayerActivationModes] = useState<Record<string, string>>({});
   const [graph, setGraph] = useState<GraphPayload>({ nodes: [], edges: [] });
@@ -75,27 +76,103 @@ export default function App() {
   const [estimates, setEstimates] = useState<any>({});
   const [loadingGraph, setLoadingGraph] = useState<boolean>(true);
   const [loadingLayer, setLoadingLayer] = useState<boolean>(false);
+  const [runtimeInfo, setRuntimeInfo] = useState<RuntimePayload | null>(null);
+  const [runtimeError, setRuntimeError] = useState<string | null>(null);
+  const [hydrated, setHydrated] = useState(false);
+  const [finalizing, setFinalizing] = useState(false);
+  const [finalizeResult, setFinalizeResult] = useState<FinalizeResponse | null>(null);
+  const [closing, setClosing] = useState(false);
+  const [distributionsUnavailable, setDistributionsUnavailable] = useState(false);
+
+  const canRecompute = runtimeInfo?.runtime_recompute_enabled ?? true;
+
+  // -- Hydrate controls from backend latest_state on first load ---------------
+  useEffect(() => {
+    fetch("/api/runtime")
+      .then(async (r) => {
+        if (!r.ok) throw new Error("Failed to fetch runtime");
+        return r.json();
+      })
+      .then((payload: RuntimePayload) => {
+        setRuntimeInfo(payload);
+        if (payload.latest_state) {
+          setRangeMode(payload.latest_state.range_mode as RangeMode);
+          setGlobalWeightPrecision(payload.latest_state.global_weight_mode as PrecisionMode);
+          setGlobalActivationPrecision(payload.latest_state.global_activation_mode as PrecisionMode);
+          setLayerWeightModes(payload.latest_state.layer_weight_modes ?? {});
+          setLayerActivationModes(payload.latest_state.layer_activation_modes ?? {});
+        }
+        setHydrated(true);
+      })
+      .catch((err) => {
+        setRuntimeError(err instanceof Error ? err.message : "Runtime fetch failed");
+        setHydrated(true);
+      });
+  }, []);
 
   const layerWeightModesJson = useMemo(() => JSON.stringify(layerWeightModes), [layerWeightModes]);
   const layerActivationModesJson = useMemo(() => JSON.stringify(layerActivationModes), [layerActivationModes]);
+  const strategyQuery = useMemo(
+    () =>
+      `range_mode=${rangeMode}&weight_mode=${globalWeightPrecision}&activation_mode=${globalActivationPrecision}&layer_weight_modes=${encodeURIComponent(layerWeightModesJson)}&layer_activation_modes=${encodeURIComponent(layerActivationModesJson)}`,
+    [rangeMode, globalWeightPrecision, globalActivationPrecision, layerWeightModesJson, layerActivationModesJson]
+  );
+
+  // -- Debounced active-state persistence -------------------------------------
+  const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const persistActiveState = useCallback(() => {
+    if (debounceRef.current) clearTimeout(debounceRef.current);
+    debounceRef.current = setTimeout(() => {
+      fetch("/api/runtime/active-state", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          range_mode: rangeMode,
+          global_weight_mode: globalWeightPrecision,
+          global_activation_mode: globalActivationPrecision,
+          layer_weight_modes: layerWeightModes,
+          layer_activation_modes: layerActivationModes,
+        }),
+      }).catch(() => {});
+    }, 300);
+  }, [rangeMode, globalWeightPrecision, globalActivationPrecision, layerWeightModes, layerActivationModes]);
 
   useEffect(() => {
+    if (!hydrated) return;
+    persistActiveState();
+  }, [hydrated, persistActiveState]);
+
+  // -- Fetch graph + estimates when strategy changes --------------------------
+  useEffect(() => {
+    if (!hydrated) return;
     setLoadingGraph(true);
-    fetch(
-      `/api/graph?range_mode=${rangeMode}&weight_mode=${globalWeightPrecision}&activation_mode=${globalActivationPrecision}&layer_weight_modes=${encodeURIComponent(layerWeightModesJson)}&layer_activation_modes=${encodeURIComponent(layerActivationModesJson)}`
-    )
-      .then((r) => r.json())
-      .then(setGraph)
+    fetch(`/api/graph?${strategyQuery}`)
+      .then((r) => {
+        if (!r.ok) return null;
+        return r.json();
+      })
+      .then((data) => { if (data) setGraph(data); })
       .finally(() => setLoadingGraph(false));
-    fetch(
-      `/api/estimates?range_mode=${rangeMode}&weight_mode=${globalWeightPrecision}&activation_mode=${globalActivationPrecision}&layer_weight_modes=${encodeURIComponent(layerWeightModesJson)}&layer_activation_modes=${encodeURIComponent(layerActivationModesJson)}`
-    )
-      .then((r) => r.json())
-      .then(setEstimates);
-  }, [rangeMode, globalWeightPrecision, globalActivationPrecision, layerWeightModesJson, layerActivationModesJson]);
+    fetch(`/api/estimates?${strategyQuery}`)
+      .then((r) => (r.ok ? r.json() : null))
+      .then((data) => { if (data) setEstimates(data); });
+  }, [hydrated, strategyQuery]);
 
+  // -- Refresh runtime info when strategy changes -----------------------------
   useEffect(() => {
-    if (!selectedLayer) return;
+    if (!hydrated) return;
+    fetch("/api/runtime")
+      .then(async (r) => {
+        if (!r.ok) throw new Error("Runtime fetch failed");
+        return r.json();
+      })
+      .then(setRuntimeInfo)
+      .catch((e) => setRuntimeError(e instanceof Error ? e.message : "Unknown error"));
+  }, [hydrated, strategyQuery]);
+
+  // -- Fetch layer detail when selected layer / strategy changes --------------
+  useEffect(() => {
+    if (!hydrated || !selectedLayer) return;
     setLoadingLayer(true);
     const selectedLayerPath = encodeURIComponent(selectedLayer);
     const selectedNode = graph.nodes.find((n) => n.id === selectedLayer);
@@ -103,23 +180,59 @@ export default function App() {
     const selectedActivationMode = layerActivationModes[selectedLayer] ?? globalActivationPrecision;
     const shouldFetchQparams =
       isIntegerMode(selectedActivationMode) || (Boolean(selectedNode?.has_weights) && isIntegerMode(selectedWeightMode));
-    fetch(
-      `/api/layers/${selectedLayerPath}/distributions?range_mode=${rangeMode}&weight_mode=${globalWeightPrecision}&activation_mode=${globalActivationPrecision}&layer_weight_modes=${encodeURIComponent(layerWeightModesJson)}&layer_activation_modes=${encodeURIComponent(layerActivationModesJson)}`
-    )
-      .then((r) => r.json())
+    fetch(`/api/layers/${selectedLayerPath}/distributions?${strategyQuery}`)
+      .then((r) => {
+        if (!r.ok) {
+          setDistributionsUnavailable(true);
+          return { activations: {}, weights: {}, biases: {} };
+        }
+        setDistributionsUnavailable(false);
+        return r.json();
+      })
       .then(setDistributions);
     if (shouldFetchQparams) {
-      fetch(
-        `/api/layers/${selectedLayerPath}/qparams?range_mode=${rangeMode}&weight_mode=${globalWeightPrecision}&activation_mode=${globalActivationPrecision}&layer_weight_modes=${encodeURIComponent(layerWeightModesJson)}&layer_activation_modes=${encodeURIComponent(layerActivationModesJson)}`
-      )
-        .then((r) => r.json())
+      fetch(`/api/layers/${selectedLayerPath}/qparams?${strategyQuery}`)
+        .then((r) => (r.ok ? r.json() : {}))
         .then(setQparams)
         .finally(() => setLoadingLayer(false));
     } else {
       setQparams({});
       setLoadingLayer(false);
     }
-  }, [selectedLayer, rangeMode, globalWeightPrecision, globalActivationPrecision, layerWeightModesJson, layerActivationModesJson, graph.nodes, layerWeightModes, layerActivationModes]);
+  }, [hydrated, selectedLayer, strategyQuery, graph.nodes, layerWeightModes, layerActivationModes, globalWeightPrecision, globalActivationPrecision]);
+
+  // -- Finalize and close handlers --------------------------------------------
+  const handleFinalize = useCallback(async () => {
+    if (finalizing) return;
+    setFinalizing(true);
+    setFinalizeResult(null);
+    try {
+      const resp = await fetch("/api/run/finalize", { method: "POST" });
+      const data: FinalizeResponse = await resp.json();
+      if (!resp.ok) throw new Error((data as any).detail ?? "Finalize failed");
+      setFinalizeResult(data);
+      const rtResp = await fetch("/api/runtime");
+      if (rtResp.ok) setRuntimeInfo(await rtResp.json());
+    } catch (e) {
+      setRuntimeError(e instanceof Error ? e.message : "Finalize error");
+    } finally {
+      setFinalizing(false);
+    }
+  }, [finalizing]);
+
+  const [serverStopped, setServerStopped] = useState(false);
+
+  const handleClose = useCallback(async () => {
+    if (closing) return;
+    setClosing(true);
+    try {
+      await fetch("/api/run/close", { method: "POST" });
+    } catch {
+      // expected: server shuts down
+    }
+    setServerStopped(true);
+    window.close();
+  }, [closing]);
 
   const nodes = useMemo<Node[]>(() => {
     const values = graph.nodes.map((n) => n.metrics[metric] ?? 0);
@@ -151,14 +264,10 @@ export default function App() {
         if (indegree[nxt] === 0) queue.push(nxt);
       }
     }
-    // Fallback in case of cycles or disconnected leftovers.
     graph.nodes.forEach((n) => {
       if (!orderedIds.includes(n.id)) orderedIds.push(n.id);
     });
 
-    // Preserve real DAG structure:
-    // - y = depth in graph
-    // - x = lane inside each depth (parallel branches become visible)
     const depth: Record<string, number> = {};
     orderedIds.forEach((id) => {
       const preds = incoming[id] ?? [];
@@ -257,6 +366,12 @@ export default function App() {
           <div className="spinner" />
         </div>
       )}
+      {(closing || serverStopped) && (
+        <div className="loading-overlay">
+          <div className="loading-title">{serverStopped ? "Server stopped" : "Shutting down..."}</div>
+          {serverStopped && <div className="stopped-hint">You can close this tab.</div>}
+        </div>
+      )}
       <header className="toolbar">
         <h2 className="brand">
           <img src="/quanta-manta-icon.svg" alt="Quanta icon" width={26} height={26} />
@@ -272,7 +387,7 @@ export default function App() {
         </label>
         <label>
           Range mode:
-          <select value={rangeMode} onChange={(e) => setRangeMode(e.target.value as "minmax" | "clip99_99" | "clip99_999")}>
+          <select value={rangeMode} disabled={!canRecompute} onChange={(e) => setRangeMode(e.target.value as RangeMode)}>
             <option value="minmax">Min/Max</option>
             <option value="clip99_99">99.99% clip</option>
             <option value="clip99_999">99.999% clip</option>
@@ -280,7 +395,15 @@ export default function App() {
         </label>
         <label>
           Global W precision:
-          <select value={globalWeightPrecision} onChange={(e) => setGlobalWeightPrecision(e.target.value as "int2" | "int4" | "int8" | "int12" | "int16" | "fp16" | "fp32")}>
+          <select value={globalWeightPrecision} disabled={!canRecompute} onChange={(e) => {
+            const next = e.target.value as PrecisionMode;
+            setGlobalWeightPrecision(next);
+            setLayerWeightModes((prev) => {
+              const cleaned: Record<string, string> = {};
+              for (const [k, v] of Object.entries(prev)) if (v !== next) cleaned[k] = v;
+              return cleaned;
+            });
+          }}>
             <option value="int2">int2</option>
             <option value="int4">int4</option>
             <option value="int8">int8</option>
@@ -292,7 +415,15 @@ export default function App() {
         </label>
         <label>
           Global A precision:
-          <select value={globalActivationPrecision} onChange={(e) => setGlobalActivationPrecision(e.target.value as "int2" | "int4" | "int8" | "int12" | "int16" | "fp16" | "fp32")}>
+          <select value={globalActivationPrecision} disabled={!canRecompute} onChange={(e) => {
+            const next = e.target.value as PrecisionMode;
+            setGlobalActivationPrecision(next);
+            setLayerActivationModes((prev) => {
+              const cleaned: Record<string, string> = {};
+              for (const [k, v] of Object.entries(prev)) if (v !== next) cleaned[k] = v;
+              return cleaned;
+            });
+          }}>
             <option value="int2">int2</option>
             <option value="int4">int4</option>
             <option value="int8">int8</option>
@@ -304,6 +435,7 @@ export default function App() {
         </label>
         <button
           type="button"
+          disabled={!canRecompute}
           onClick={() => {
             setLayerWeightModes({});
             setLayerActivationModes({});
@@ -311,7 +443,42 @@ export default function App() {
         >
           Reset to Global
         </button>
+        {canRecompute && (
+          <div className="finalize-group">
+            {!runtimeInfo?.finalized ? (
+              <button
+                type="button"
+                className="finalize-btn"
+                disabled={finalizing}
+                onClick={handleFinalize}
+              >
+                {finalizing ? "Finalizing..." : "Finalize Run"}
+              </button>
+            ) : (
+              <button
+                type="button"
+                className="close-btn-toolbar"
+                disabled={closing}
+                onClick={handleClose}
+              >
+                {closing ? "Closing..." : "Close"}
+              </button>
+            )}
+            {finalizeResult && (
+              <span className="finalize-result">
+                {finalizeResult.status === "finalized"
+                  ? `Saved: ${finalizeResult.finalized_path}`
+                  : finalizeResult.status}
+              </span>
+            )}
+          </div>
+        )}
         <div className="legend">
+          <span className="runtime-indicator">
+            {runtimeInfo?.loaded_from_run ? "Loaded" : "Live"} | {runtimeInfo?.run_id ?? "unknown"}
+            {runtimeInfo?.finalized ? " | Finalized" : ""}
+          </span>
+          {runtimeError && <span className="runtime-error">{runtimeError}</span>}
           <span>Good {"<="} {colorLegend.good.toExponential(2)}</span>
           <span>Max: {colorLegend.max.toExponential(2)}</span>
           <span>
@@ -340,32 +507,47 @@ export default function App() {
         </div>
         <div className="panel">
           {selectedLayer ? (
-            <LayerDetail
-              layerName={selectedLayer}
-              layerType={graph.nodes.find((n) => n.id === selectedLayer)?.type}
-              metricValues={selectedMetrics}
-              activations={distributions.activations ?? {}}
-              weights={distributions.weights ?? {}}
-              biases={distributions.biases ?? {}}
-              qparams={qparams}
-              metric={metric}
-              hasWeights={Boolean(graph.nodes.find((n) => n.id === selectedLayer)?.has_weights)}
-              layerWeightMode={layerWeightModes[selectedLayer] ?? globalWeightPrecision}
-              layerActivationMode={layerActivationModes[selectedLayer] ?? globalActivationPrecision}
-              layerEstimate={estimates?.layers?.[selectedLayer] ?? graph.nodes.find((n) => n.id === selectedLayer)?.estimates}
-              onLayerWeightModeChange={(mode) =>
-                setLayerWeightModes((prev) => ({
-                  ...prev,
-                  [selectedLayer]: mode,
-                }))
-              }
-              onLayerActivationModeChange={(mode) =>
-                setLayerActivationModes((prev) => ({
-                  ...prev,
-                  [selectedLayer]: mode,
-                }))
-              }
-            />
+            <>
+              {distributionsUnavailable && (
+                <div className="distributions-warning">
+                  Distributions unavailable for this run. Plots will be empty.
+                  Use <code>--final-artifact-profile full</code> or <b>Finalize Run</b> to include them.
+                </div>
+              )}
+              <LayerDetail
+                layerName={selectedLayer}
+                layerType={graph.nodes.find((n) => n.id === selectedLayer)?.type}
+                metricValues={selectedMetrics}
+                activations={distributions.activations ?? {}}
+                weights={distributions.weights ?? {}}
+                biases={distributions.biases ?? {}}
+                qparams={qparams}
+                metric={metric}
+                hasWeights={Boolean(graph.nodes.find((n) => n.id === selectedLayer)?.has_weights)}
+                layerWeightMode={layerWeightModes[selectedLayer] ?? globalWeightPrecision}
+                layerActivationMode={layerActivationModes[selectedLayer] ?? globalActivationPrecision}
+                layerEstimate={estimates?.layers?.[selectedLayer] ?? graph.nodes.find((n) => n.id === selectedLayer)?.estimates}
+                readOnly={!canRecompute}
+                onLayerWeightModeChange={(mode) =>
+                  setLayerWeightModes((prev) => {
+                    if (mode === globalWeightPrecision) {
+                      const { [selectedLayer]: _, ...rest } = prev;
+                      return rest;
+                    }
+                    return { ...prev, [selectedLayer]: mode };
+                  })
+                }
+                onLayerActivationModeChange={(mode) =>
+                  setLayerActivationModes((prev) => {
+                    if (mode === globalActivationPrecision) {
+                      const { [selectedLayer]: _, ...rest } = prev;
+                      return rest;
+                    }
+                    return { ...prev, [selectedLayer]: mode };
+                  })
+                }
+              />
+            </>
           ) : (
             <p>Select a node to view plots and qparams.</p>
           )}

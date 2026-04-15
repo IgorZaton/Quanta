@@ -35,6 +35,67 @@ body {
   font-size: 12px;
   color: #334155;
   margin-left: auto;
+  align-items: center;
+  flex-wrap: wrap;
+}
+
+.runtime-indicator {
+  background: #e2e8f0;
+  border-radius: 6px;
+  padding: 3px 8px;
+  color: #0f172a;
+}
+
+.runtime-error {
+  color: #b91c1c;
+  font-weight: 600;
+}
+
+.finalize-group {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.finalize-btn {
+  border: 1px solid #1d4ed8;
+  background: #2563eb;
+  color: #fff;
+  border-radius: 6px;
+  padding: 5px 14px;
+  cursor: pointer;
+  font-weight: 600;
+  font-size: 13px;
+}
+
+.finalize-btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.close-btn-toolbar {
+  border: 1px solid #b91c1c;
+  background: #dc2626;
+  color: #fff;
+  border-radius: 6px;
+  padding: 5px 14px;
+  cursor: pointer;
+  font-weight: 600;
+  font-size: 13px;
+}
+
+.close-btn-toolbar:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.finalize-result {
+  font-size: 11px;
+  color: #166534;
+  max-width: 260px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .body {
@@ -144,6 +205,21 @@ body {
   font-size: 24px;
   font-weight: 700;
   color: #0f4c81;
+}
+
+.stopped-hint {
+  font-size: 14px;
+  color: #64748b;
+}
+
+.distributions-warning {
+  background: #fef3c7;
+  border: 1px solid #f59e0b;
+  border-radius: 6px;
+  padding: 8px 12px;
+  margin-bottom: 10px;
+  font-size: 12px;
+  color: #92400e;
 }
 
 .spinner {

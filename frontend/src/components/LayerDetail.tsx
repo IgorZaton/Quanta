@@ -22,6 +22,7 @@ interface LayerDetailProps {
   layerWeightMode: string;
   layerActivationMode: string;
   hasWeights: boolean;
+  readOnly?: boolean;
   onLayerWeightModeChange: (mode: string) => void;
   onLayerActivationModeChange: (mode: string) => void;
   layerEstimate?: {
@@ -144,6 +145,7 @@ export function LayerDetail({
   layerWeightMode,
   layerActivationMode,
   hasWeights,
+  readOnly,
   onLayerWeightModeChange,
   onLayerActivationModeChange,
   layerEstimate,
@@ -196,7 +198,7 @@ export function LayerDetail({
         </div>
         <label>
           Activation precision:
-          <select value={layerActivationMode} onChange={(e) => onLayerActivationModeChange(e.target.value)}>
+          <select value={layerActivationMode} disabled={readOnly} onChange={(e) => onLayerActivationModeChange(e.target.value)}>
             <option value="int2">int2</option>
             <option value="int4">int4</option>
             <option value="int8">int8</option>
@@ -211,7 +213,7 @@ export function LayerDetail({
           <select
             value={layerWeightMode}
             onChange={(e) => onLayerWeightModeChange(e.target.value)}
-            disabled={!hasWeights}
+            disabled={readOnly || !hasWeights}
           >
             <option value="int2">int2</option>
             <option value="int4">int4</option>

@@ -5,7 +5,7 @@
   - Keep only essential summaries by default.
   - Keep full distributions in active tmp run cache and store optionally in finalized runs.
 
-- [ ] Add "load from run" support:
+- [x] Add "load from run" support:
   - CLI option to start server from an existing run directory (without recomputation).
   - UI indicator showing active run id/path.
   - Validation for missing/incompatible artifact files.
@@ -19,6 +19,11 @@
   - Summarize dataset shape, feature types, missingness, and basic stats.
   - Include distribution plots/correlation highlights in generated artifacts.
   - Expose dataset analysis in docs/README and (if available) UI.
+
+- [ ] Add deployable model export from UI state:
+  - Export current quantization config (per-layer precision + range mode + calibration settings) to ONNX.
+  - Apply quantization during export using provided dataset calibration artifacts.
+  - Emit export report with applied/fallback precisions, accuracy drift, and latency summary.
 
 - [x] Add CI/CD:
   - CI workflow for lint/test/build on pull requests and main branch.
