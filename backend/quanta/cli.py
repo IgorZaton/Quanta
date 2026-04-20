@@ -16,7 +16,9 @@ from typing import Any, Callable
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="Quanta quantization visualizer")
     parser.add_argument(
-        "--model", required=False, help="Path to Keras model file (.keras)"
+        "--model",
+        required=False,
+        help="Path to model file (.keras for TensorFlow or TorchScript .pt)",
     )
     parser.add_argument(
         "--dataset", required=False, help="Path to representative dataset .npy"

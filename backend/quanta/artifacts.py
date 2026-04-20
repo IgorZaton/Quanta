@@ -21,6 +21,24 @@ class RawEdge:
     target_input_index: int | None = None
 
 
+def _history_op_and_tensor_index(history: Any) -> tuple[Any | None, int | None]:
+    """Support both modern and legacy Keras `_keras_history` formats."""
+    if history is None:
+        return None, None
+    # Legacy / tf_keras often uses tuple(layer/op, node_idx, tensor_idx)
+    if isinstance(history, tuple):
+        op = history[0] if len(history) > 0 else None
+        tensor_idx = history[2] if len(history) > 2 else None
+        return op, tensor_idx
+    # Newer Keras exposes a Trackable object with `.operation` and `.tensor_index`.
+    op = getattr(history, "operation", None)
+    tensor_idx = getattr(history, "tensor_index", None)
+    # Some variants expose `.layer` instead of `.operation`.
+    if op is None:
+        op = getattr(history, "layer", None)
+    return op, tensor_idx
+
+
 def _layer_input_sources(
     layer: tf.keras.layers.Layer, op_to_name: dict[int, str]
 ) -> list[tuple[str, int | None, int]]:
@@ -29,10 +47,10 @@ def _layer_input_sources(
         tensors = layer.input if isinstance(layer.input, list) else [layer.input]
         for input_idx, tensor in enumerate(tensors):
             history = getattr(tensor, "_keras_history", None)
-            if history is not None and hasattr(history, "operation"):
-                src = op_to_name.get(id(history.operation))
+            op, tensor_idx = _history_op_and_tensor_index(history)
+            if op is not None:
+                src = op_to_name.get(id(op))
                 if src is not None:
-                    tensor_idx = getattr(history, "tensor_index", None)
                     names.append((src, tensor_idx, input_idx))
     except Exception:
         names = []
@@ -49,10 +67,10 @@ def _layer_input_sources(
             tensors = node_inputs if isinstance(node_inputs, list) else [node_inputs]
             for input_idx, tensor in enumerate(tensors):
                 history = getattr(tensor, "_keras_history", None)
-                if history is not None and hasattr(history, "operation"):
-                    src = op_to_name.get(id(history.operation))
+                op, tensor_idx = _history_op_and_tensor_index(history)
+                if op is not None:
+                    src = op_to_name.get(id(op))
                     if src is not None:
-                        tensor_idx = getattr(history, "tensor_index", None)
                         names.append((src, tensor_idx, input_idx))
     return names
 
@@ -73,7 +91,7 @@ def build_graph(
 
     for tensor in model.inputs:
         history = getattr(tensor, "_keras_history", None)
-        op = getattr(history, "operation", None) if history is not None else None
+        op, _ = _history_op_and_tensor_index(history)
         if op is None:
             continue
         input_name = op.name
@@ -163,7 +181,7 @@ def build_graph(
             layer_inputs = [single_in] if single_in is not None else []
         for idx, t in enumerate(layer_inputs):
             history = getattr(t, "_keras_history", None)
-            op = getattr(history, "operation", None) if history is not None else None
+            op, _ = _history_op_and_tensor_index(history)
             if op is not None:
                 in_port_ops[id(op)] = idx
         entry_by_port: dict[int, set[str]] = {}
@@ -179,9 +197,7 @@ def build_graph(
                 tensors = []
             for tensor in tensors:
                 history = getattr(tensor, "_keras_history", None)
-                op = (
-                    getattr(history, "operation", None) if history is not None else None
-                )
+                op, _ = _history_op_and_tensor_index(history)
                 if op is None:
                     continue
                 port_idx = in_port_ops.get(id(op))
@@ -196,7 +212,7 @@ def build_graph(
             layer_outputs = [single_out] if single_out is not None else []
         for idx, t in enumerate(layer_outputs):
             history = getattr(t, "_keras_history", None)
-            op = getattr(history, "operation", None) if history is not None else None
+            op, _ = _history_op_and_tensor_index(history)
             if op is None:
                 continue
             src_name = op_to_name.get(id(op))
@@ -274,7 +290,7 @@ def build_graph(
             tensors = []
         for t in tensors:
             history = getattr(t, "_keras_history", None)
-            op = getattr(history, "operation", None) if history is not None else None
+            op, _ = _history_op_and_tensor_index(history)
             op_name = getattr(op, "name", None)
             if op_name in input_node_names and (op_name, ref.name) not in edge_set:
                 edges.append({"source": op_name, "target": ref.name})

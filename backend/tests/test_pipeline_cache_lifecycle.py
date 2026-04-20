@@ -12,6 +12,7 @@ import numpy as np
 from fastapi.testclient import TestClient
 
 from quanta.model_ir import LayerMeta, UnifiedModel
+from quanta.model_io import ConversionStageError
 from quanta import cli
 from quanta.pipeline import PipelineConfig, _prune_previous_runs, run_pipeline
 from quanta.server import create_app
@@ -146,6 +147,120 @@ class PipelineCacheLifecycleTest(unittest.TestCase):
             ]
             self.assertEqual(len(kept_completed), 2)
             self.assertTrue(tmp_run.exists())
+
+    def test_pipeline_reports_conversion_stage_errors(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            output_root = Path(tmp) / ".quanta"
+            config = PipelineConfig(
+                model_path="dummy.pt",
+                dataset_path="dummy.npy",
+                output_root=str(output_root),
+                final_artifact_profile="minimal",
+                max_cached_runs=1,
+            )
+            with (
+                mock.patch("quanta.pipeline.DatasetAdapter", _DummyDatasetAdapter),
+                mock.patch("quanta.pipeline.ModelLoader") as loader_cls,
+                mock.patch("quanta.pipeline.ModelConverter"),
+            ):
+                loader_cls.return_value.load.side_effect = ConversionStageError(
+                    "onnx_export", "boom"
+                )
+                with self.assertRaises(ValueError) as exc:
+                    run_pipeline(config)
+            self.assertIn("onnx_export", str(exc.exception))
+
+    def test_pipeline_writes_estimates_consistently_with_graph_nodes(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            output_root = Path(tmp) / ".quanta"
+            config = PipelineConfig(
+                model_path="dummy.pt",
+                dataset_path="dummy.npy",
+                output_root=str(output_root),
+                final_artifact_profile="minimal",
+                max_cached_runs=1,
+            )
+            model_graph = {
+                "nodes": [
+                    {"id": "dummy", "name": "dummy", "type": "Dense"},
+                    {"id": "dummy_2", "name": "dummy_2", "type": "Dense"},
+                ],
+                "edges": [{"source": "dummy", "target": "dummy_2"}],
+            }
+            unified = UnifiedModel(
+                model=_DummyModel(),  # type: ignore[arg-type]
+                metadata=[
+                    LayerMeta(
+                        name="dummy",
+                        layer_type="Dense",
+                        input_shape=(None, 2),
+                        output_shape=(None, 2),
+                        params=32,
+                        has_weights=True,
+                    ),
+                    LayerMeta(
+                        name="dummy_2",
+                        layer_type="Dense",
+                        input_shape=(None, 2),
+                        output_shape=(None, 2),
+                        params=64,
+                        has_weights=True,
+                    ),
+                ],
+                graph=model_graph,
+            )
+            fake_quant_result = self._fake_quant_result()
+            fake_quant_result["fp32_outputs"] = {
+                "dummy": np.zeros((4, 2), dtype=np.float32),
+                "dummy_2": np.zeros((4, 2), dtype=np.float32),
+            }
+            fake_quant_result["dequant_outputs"] = {
+                "dummy": np.zeros((4, 2), dtype=np.float32),
+                "dummy_2": np.zeros((4, 2), dtype=np.float32),
+            }
+            fake_quant_result["activation_qparams"] = {
+                "dummy": fake_quant_result["activation_qparams"]["dummy"],
+                "dummy_2": fake_quant_result["activation_qparams"]["dummy"],
+            }
+            with (
+                mock.patch("quanta.pipeline.DatasetAdapter", _DummyDatasetAdapter),
+                mock.patch("quanta.pipeline.ModelLoader") as loader_cls,
+                mock.patch("quanta.pipeline.ModelConverter") as conv_cls,
+                mock.patch(
+                    "quanta.pipeline.run_fake_quant_pipeline",
+                    return_value=fake_quant_result,
+                ),
+                mock.patch(
+                    "quanta.pipeline.compute_metrics",
+                    return_value={
+                        "layers": {
+                            "dummy": {"mae": 0.1, "rmse": 0.2, "kl": 0.3},
+                            "dummy_2": {"mae": 0.4, "rmse": 0.5, "kl": 0.6},
+                        }
+                    },
+                ),
+            ):
+                loader_cls.return_value.load.return_value = _DummyModel()
+                conv_cls.return_value.convert.return_value = unified
+                tmp_dir = run_pipeline(config)
+
+            graph = json.loads((tmp_dir / "graph.json").read_text())
+            estimates = json.loads((tmp_dir / "estimates.json").read_text())
+            self.assertEqual(len(graph["nodes"]), 2)
+            self.assertIn("global", estimates)
+            self.assertIn("layers", estimates)
+            self.assertEqual(set(estimates["layers"].keys()), {"dummy", "dummy_2"})
+
+            nodes_by_name = {n["name"]: n for n in graph["nodes"]}
+            self.assertEqual(nodes_by_name["dummy"]["metrics"]["mae"], 0.1)
+            self.assertEqual(nodes_by_name["dummy_2"]["metrics"]["rmse"], 0.5)
+            self.assertIn("size_kb", nodes_by_name["dummy"]["estimates"])
+            self.assertIn("latency_ms", nodes_by_name["dummy_2"]["estimates"])
+
+            summed_size = sum(v["size_bytes"] for v in estimates["layers"].values())
+            summed_latency = sum(v["latency_ms"] for v in estimates["layers"].values())
+            self.assertAlmostEqual(estimates["global"]["size_bytes"], summed_size)
+            self.assertAlmostEqual(estimates["global"]["latency_ms"], summed_latency)
 
 
 class ServerDistributionAvailabilityTest(unittest.TestCase):

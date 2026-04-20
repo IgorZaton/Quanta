@@ -18,6 +18,12 @@ dev = [
   "pre-commit>=4.0.0",
   "commitizen>=3.0.0",
 ]
+pt = [
+  "torch>=2.1.0",
+  "onnx>=1.16.0",
+  "onnx2keras>=0.0.24",
+  "tf-keras>=2.20.1",
+]
 
 [project.scripts]
 quanta = "quanta.cli:main"

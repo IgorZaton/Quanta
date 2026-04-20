@@ -11,8 +11,13 @@ npm install
 npm run build
 
 echo "[quanta] Reinstalling backend package..."
-cd "$BACKEND_DIR"
-pip install -e .
+if command -v poetry >/dev/null 2>&1 && [[ -f "$ROOT_DIR/pyproject.toml" ]]; then
+  cd "$ROOT_DIR"
+  poetry install
+else
+  cd "$BACKEND_DIR"
+  pip install -e .
+fi
 
 echo "[quanta] Stopping existing quanta processes (if any)..."
 pkill -f "quanta" || true

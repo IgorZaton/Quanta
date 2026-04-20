@@ -25,6 +25,16 @@
   - Apply quantization during export using provided dataset calibration artifacts.
   - Emit export report with applied/fallback precisions, accuracy drift, and latency summary.
 
+- [ ] Introduce ONNX as Quanta common internal type:
+  - Define a stable ONNX-centered internal model contract plus source-to-ONNX name mapping.
+  - Keep artifact/API schema stable while moving framework loaders (TF/PT) behind the common ONNX contract.
+  - Add conversion fidelity checks (shape/op/name mapping) and failure policies for unsupported graphs.
+
+- [ ] Remove legacy-library conversion fallbacks and support latest libs natively:
+  - Replace onnx2keras/tf_keras fallback path with a latest-version compatible ONNX->TF bridge.
+  - Eliminate unsafe-deserialization/legacy toggles once modern conversion path is stable.
+  - Keep PT->ONNX->TF conversion reliability and graph fidelity with current library versions.
+
 - [x] Add CI/CD:
   - CI workflow for lint/test/build on pull requests and main branch.
   - Cache dependencies and publish test artifacts/reports.

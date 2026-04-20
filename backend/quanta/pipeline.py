@@ -12,7 +12,7 @@ from .adapters import DatasetAdapter
 from .artifacts import build_graph, finalize_run_artifacts, write_artifacts
 from .estimates import estimate_tradeoffs
 from .metrics import compute_metrics
-from .model_io import ModelConverter, ModelLoader
+from .model_io import ConversionStageError, ModelConverter, ModelLoader
 from .quantization import run_fake_quant_pipeline
 
 
@@ -62,27 +62,49 @@ def run_pipeline(config: PipelineConfig) -> Path:
             f"Unsupported final artifact profile: {config.final_artifact_profile}"
         )
 
-    loader = ModelLoader()
-    converter = ModelConverter()
-    unified_model = converter.convert(
-        loader.load(config.model_path, custom_objects=config.custom_objects)
-    )
     dataset_adapter = DatasetAdapter(
         config.dataset_path,
         batch_size=config.batch_size,
         max_samples=config.max_samples,
     )
     dataset = dataset_adapter.load().astype(np.float32)
+    sample_shape = tuple(dataset.shape[1:])
+
+    loader = ModelLoader()
+    converter = ModelConverter()
+    try:
+        loaded = loader.load(config.model_path, custom_objects=config.custom_objects)
+        unified_model = converter.convert(loaded, sample_shape=sample_shape)
+    except ConversionStageError as exc:
+        raise ValueError(
+            f"Model conversion failed at stage '{exc.stage}': {exc}"
+        ) from exc
     if isinstance(unified_model.model.input_shape, list):
         raise ValueError("Multi-input models are not supported in this MVP")
     expected_shape = tuple(unified_model.model.input_shape[1:])
-    sample_shape = tuple(dataset.shape[1:])
+    if expected_shape == (*sample_shape, 1):
+        # Common bridge case: ONNX->TF model is channels-last with explicit
+        # singleton channel while representative dataset is channel-less.
+        dataset = dataset[..., np.newaxis]
+        sample_shape = tuple(dataset.shape[1:])
+    elif (
+        len(sample_shape) == len(expected_shape)
+        and sample_shape[0] == 1
+        and expected_shape[-1] == 1
+        and sample_shape[1:] == expected_shape[:-1]
+    ):
+        # Convert channel-first singleton (C,H,W) to channel-last (H,W,C).
+        dataset = np.moveaxis(dataset, 1, -1)
+        sample_shape = tuple(dataset.shape[1:])
     if expected_shape != sample_shape:
         raise ValueError(
             f"Dataset sample shape {sample_shape} does not match model input shape {expected_shape}"
         )
 
-    batches = list(dataset_adapter.iter_batches())
+    batches = [
+        dataset[i : i + config.batch_size]
+        for i in range(0, len(dataset), config.batch_size)
+    ]
     result = run_fake_quant_pipeline(
         unified_model.model,
         batches,

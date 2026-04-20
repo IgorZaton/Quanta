@@ -3,7 +3,7 @@
   <span style="vertical-align: middle;">Quanta</span>
 </h1>
 
-Quanta is a Keras-first quantization visualization tool.
+Quanta is a quantization visualization tool with TensorFlow/Keras support and an initial PyTorch bridge path.
 
 It runs a min/max observer pipeline, builds a fake INT8 quantized path (with dequantization for fair comparison), computes error metrics, and serves an interactive graph UI with per-layer violin plots for weights and activations.
 
@@ -14,7 +14,29 @@ It runs a min/max observer pipeline, builds a fake INT8 quantized path (with deq
 - Python 3.10+
 - Node.js 18+ and npm (for building/running frontend)
 
+For `.pt` support (TorchScript), install optional bridge dependencies:
+
+- `torch`
+- `onnx`
+- `onnx2keras`
+- `tf-keras`
+
 ## Install
+
+### Workspace with Poetry (recommended)
+
+From the project root:
+
+```bash
+poetry install
+poetry shell
+```
+
+This installs the backend package in editable mode via the root workspace config, so you can run:
+
+```bash
+quanta --help
+```
 
 ### Backend
 
@@ -60,6 +82,13 @@ cd backend
 quanta --model /path/to/model.keras --dataset /path/to/dataset.npy
 ```
 
+PyTorch bridge path (TorchScript only):
+
+```bash
+cd backend
+quanta --model /path/to/model.pt --dataset /path/to/dataset.npy
+```
+
 Useful flags:
 
 - `--host 127.0.0.1`
@@ -81,7 +110,9 @@ cd backend
 quanta --load-run /path/to/project/.quanta/run_20260415_101010_123456
 ```
 
-`--load-run` is strict: startup fails if required artifacts are missing/incompatible. In load mode, do not pass `--model`, `--dataset`, or `--test`.
+`--load-run` is strict: startup fails if required artifacts are missing/incompatible.
+
+`.pt` support currently uses `PT -> ONNX -> TF/Keras`. Conversion failures are reported with stage tags (`pt_load`, `onnx_export`, `onnx_validate`, `onnx_to_tf`) to make troubleshooting actionable.
 
 Runs finalized via the UI **Finalize Run** button always include `distributions.json` and `latest_state` metadata, so they are fully restorable with plots and the exact quantization settings that were active at finalize time.
 

@@ -1,9 +1,10 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
-import tensorflow as tf
+if TYPE_CHECKING:
+    import tensorflow as tf
 
 
 @dataclass
@@ -18,6 +19,6 @@ class LayerMeta:
 
 @dataclass
 class UnifiedModel:
-    model: tf.keras.Model
+    model: "tf.keras.Model"
     metadata: list[LayerMeta]
     graph: dict[str, Any] | None = None

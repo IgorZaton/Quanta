@@ -1,0 +1,26 @@
+[tool.poetry]
+name = "quanta-workspace"
+version = "0.1.0"
+description = "Workspace environment for Quanta backend and tooling"
+authors = ["Quanta Developers"]
+package-mode = false
+
+[tool.poetry.dependencies]
+python = ">=3.11,<3.13"
+quanta = { path = "backend", develop = true }
+torch = "^2.11.0"
+onnx = "^1.21.0"
+onnxruntime = "^1.24.4"
+onnx2keras = "^0.0.24"
+onnxscript = "^0.6.2"
+tf-keras = "^2.20.1"
+
+[tool.poetry.group.dev.dependencies]
+pytest = ">=8.0.0"
+httpx = ">=0.27.0"
+pre-commit = ">=4.0.0"
+commitizen = ">=3.0.0"
+
+[build-system]
+requires = ["poetry-core>=1.8.0"]
+build-backend = "poetry.core.masonry.api"
